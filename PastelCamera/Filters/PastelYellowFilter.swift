@@ -21,4 +21,3 @@ class PastelYellowFilter: ImageFilter {
         return filteredImage ?? image
     }
 }
-

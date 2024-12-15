@@ -8,62 +8,37 @@ import Combine
 protocol CameraViewModelDelegate: AnyObject {
     func didCapturePhoto(_ photo: UIImage)
     func updateFlashButtonIcon(isFlashOn: Bool)
-    func updateThumbnail()
+    // func updateThumbnail()
 }
 
 class CameraViewModel: NSObject {
     
-    @Published var filteredImage: UIImage?
-    @Published var isGridFeatureEnabled: Bool = false
     weak var delegate: CameraViewModelDelegate?
-    var isFlashOn: Bool = false
-    var captureSession: AVCaptureSession! // カメラのセッションを管理するプロパティ
-    var onFilterApplied: ((UIImage) -> Void)?
-    var currentImage: UIImage?
-    private var photoOutput: AVCapturePhotoOutput!
-    private(set) var isFrontCameraActive: Bool = false
-    private var currentFilterIndex = 0
-    private var previewImages: [UIImage] = []
-    private var filters: [ImageFilter] = [OriginalFilter(), PastelPinkFilter(), PastelRoseFilter(), PastelLavenderFilter(), PastelLightBlueFilter(), PastelVioletFilter(), PastelYellowFilter()]
     
-    enum SaveLocation: String {
-        case cameraRoll = "cameraRoll"
-        case documentDirectory = "documentDirectory"
-    }
+    var captureSession: AVCaptureSession!              // カメラの入力（デバイス）と出力（写真、ビデオなど）のデータフローを管理する
+    private var photoOutput: AVCapturePhotoOutput!     // 写真のキャプチャを管理する出力オブジェクト
+    private(set) var currentDevice: AVCaptureDevice?        // 現在使用中のカメラデバイス（広角や超広角カメラなど）を保持する
+    private(set) var isWideAngle: Bool = true          // 現在のカメラ状態(広角か超広角か)を追跡
+    private(set) var isFrontCameraActive: Bool = false // インカメの追跡
+    private(set) var isFlashOn: Bool = false           // フラッシュの追跡
     
-    var saveLocation: SaveLocation {
-        get {
-            let storedValue = UserDefaults.standard.string(forKey: "saveLocation") ?? SaveLocation.cameraRoll.rawValue
-            return SaveLocation(rawValue: storedValue) ?? .cameraRoll
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "saveLocation")
-        }
-    }
-    
-    func applyNextFilter() {
-        currentFilterIndex = (currentFilterIndex + 1) % filters.count
-        updateFilterPreview()
+    // ボタンの有効/無効状態を取得
+    var canSwitchToWideAngle: Bool {
+        return !isWideAngle
     }
 
-    func applyPreviousFilter() {
-        currentFilterIndex = (currentFilterIndex - 1 + filters.count) % filters.count
-        updateFilterPreview()
-    }
-
-    func updateFilterPreview() {
-        guard let currentImage = currentImage else { return }
-        let currentFilter = filters[currentFilterIndex]
-        filteredImage = currentFilter.apply(to: currentImage)
+    var canSwitchToUltraWide: Bool {
+        return isWideAngle
     }
     
     // カメラの初期設定を行う
     func setupCamera() {
+        // セッションの初期化
         captureSession = AVCaptureSession()
         captureSession.sessionPreset = .photo
 
-        // カメラデバイスの取得
-        guard let backCamera = AVCaptureDevice.default(for: .video) else {
+        // 初期カメラデバイスの設定（広角）
+        guard let backCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
             print("エラー: カメラが利用できません")
             return
         }
@@ -71,15 +46,16 @@ class CameraViewModel: NSObject {
         do {
             let input = try AVCaptureDeviceInput(device: backCamera)
             captureSession.addInput(input)
+            currentDevice = backCamera
         } catch {
             print("Error: \(error)")
             return
         }
 
-        // AVCaptureSessionの設定変更を開始
+        // セッションの設定変更を開始
         captureSession.beginConfiguration()
 
-        // photoOutputの初期化
+        // PhotoOutputの初期化
         photoOutput = AVCapturePhotoOutput()
         photoOutput.isHighResolutionCaptureEnabled = false
 
@@ -87,7 +63,7 @@ class CameraViewModel: NSObject {
             photoOutput.maxPhotoQualityPrioritization = .balanced
         }
 
-        // photoOutputをセッションに追加
+        // PhotoOutputをセッションに追加
         if captureSession.canAddOutput(photoOutput) {
             captureSession.addOutput(photoOutput)
         } else {
@@ -106,6 +82,52 @@ class CameraViewModel: NSObject {
             }
         }
     }
+
+    // 広角カメラに切り替える
+    func switchToWideAngle() {
+        switchCamera(to: .builtInWideAngleCamera)
+        guard !isWideAngle else { return }
+        isWideAngle = true
+    }
+
+    // 超広角カメラに切り替える
+    func switchToUltraWide() {
+        switchCamera(to: .builtInUltraWideCamera)
+        guard isWideAngle else { return }
+        isWideAngle = false
+    }
+
+    // カメラを切り替える共通処理
+    private func switchCamera(to deviceType: AVCaptureDevice.DeviceType) {
+        captureSession.beginConfiguration()
+
+        // 現在の入力を削除
+        if let currentInput = captureSession.inputs.first as? AVCaptureDeviceInput {
+            captureSession.removeInput(currentInput)
+        }
+
+        // 新しいカメラデバイスを設定
+        guard let newDevice = AVCaptureDevice.default(deviceType, for: .video, position: .back) else {
+            print("エラー: 指定したカメラが見つかりません")
+            captureSession.commitConfiguration()
+            return
+        }
+
+        do {
+            let newInput = try AVCaptureDeviceInput(device: newDevice)
+            if captureSession.canAddInput(newInput) {
+                captureSession.addInput(newInput)
+                currentDevice = newDevice
+            } else {
+                print("エラー: 新しいカメラデバイスを追加できませんでした")
+            }
+        } catch {
+            print("カメラ切り替え中にエラー: \(error)")
+        }
+
+        captureSession.commitConfiguration()
+    }
+    
     // 写真を撮影する際の設定
     func createPhotoSettings() -> AVCapturePhotoSettings {
         print("createPhotoSettings()内のisFlashOn: \(isFlashOn)")
@@ -131,11 +153,12 @@ class CameraViewModel: NSObject {
     func capturePhoto() {
         print("写真撮影を開始")
 
-        let settings = AVCapturePhotoSettings()  // シンプルに設定を生成
+        let settings = AVCapturePhotoSettings()
 
         // 写真撮影を実行
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
+    
     //カメラのフロントとバックを切り替える関数
     func flipCamera() {
         // 現在の入力デバイスを取得
@@ -243,28 +266,6 @@ class PhotoProcessor {
         guard let newCGImage = context.makeImage() else { return nil }
         return UIImage(cgImage: newCGImage)
     }
-    
-    // 画像をDocumentディレクトリに保存する関数
-    static func saveImageToDocumentDirectory(image: UIImage, imageName: String) {
-        // DocumentディレクトリのURLを取得
-        guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("ドキュメントディレクトリが見つかりませんでした")
-            return
-        }
-        
-        // 画像の保存先URLを作成
-        let fileURL = documentsDirectory.appendingPathComponent("\(imageName).jpg")
-        
-        // 画像をJPEGデータに変換して保存
-        if let imageData = image.jpegData(compressionQuality: 0.8) {
-            do {
-                try imageData.write(to: fileURL)
-                print("画像が保存されました: \(fileURL)")
-            } catch {
-                print("画像の保存中にエラーが発生しました: \(error)")
-            }
-        }
-    }
 }
 
 // 写真が撮影された後に呼ばれるコード
@@ -283,20 +284,9 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
             return
         }
         
-        // 保存先に応じた処理
-        switch saveLocation {
-        case .cameraRoll:
-            // カメラロールに保存
-            UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-            print("写真をカメラロールに保存しました")
-        case .documentDirectory:
-            // ドキュメントディレクトリに保存
-            PhotoProcessor.saveImageToDocumentDirectory(image: image, imageName: "capturedPhoto")
-            print("写真をドキュメントディレクトリに保存しました")
-        }
-        
-        // サムネイルを更新
-        delegate?.updateThumbnail()
+        // カメラロールに保存
+        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+        print("写真をカメラロールに保存しました")
         
         // 撮影後にフラッシュの状態を初期化（オフに戻す）
         isFlashOn = false
@@ -327,11 +317,5 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
             print("エラー: 写真データが取得できませんでした。")
             return
         }
-        
-        // 選択されているフィルターを適用
-        let filteredImage = filters[currentFilterIndex].apply(to: currentImage)
-        
-        // フィルター適用後の画像をコールバックでViewControllerに渡す
-        onFilterApplied?(filteredImage)
     }
 }

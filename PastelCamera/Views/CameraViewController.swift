@@ -28,13 +28,13 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         thumbnailButton.setImage(photo, for: .normal)
     }
     
-    var viewModel: CameraViewModel!                       // ViewModelのインスタンス。データ管理とUIロジックを担当。
-    var isFlashOn = false                                 // フラッシュのオン/オフ状態を保持するフラグ。
-    var captureSession: AVCaptureSession?                 // カメラのキャプチャセッション。映像入力の設定を管理する。
-    var videoPreviewLayer: AVCaptureVideoPreviewLayer?    // ビデオプレビューを表示するレイヤー（プレビュー画面に表示するため）。
-    var capturedImage: UIImage?                           // サムネイルに表示する撮影済みの画像。
-    private var previewLayer: AVCaptureVideoPreviewLayer! // カメラのプレビューを表示するレイヤー。
-    private var gridOverlayView: UIView?                  // カメラのグリッドオーバーレイ表示用のビュー。
+    var viewModel: CameraViewModel!                       // ViewModelのインスタンス。データ管理とUIロジックを担当
+    var isFlashOn = false                                 // フラッシュのオン/オフ状態を保持するフラグ
+    var captureSession: AVCaptureSession?                 // カメラのキャプチャセッション。映像入力の設定を管理する
+    var capturedImage: UIImage?                           // サムネイルに表示する撮影済みの画像
+    var videoPreviewLayer: AVCaptureVideoPreviewLayer?    // ビデオプレビューを表示するレイヤー（プレビュー画面に表示するため）
+    private var previewLayer: AVCaptureVideoPreviewLayer! // カメラのプレビューを表示するレイヤー
+    private var gridOverlayView: UIView?                  // カメラのグリッドオーバーレイ表示用のビュー
         
     // シャッターボタン
     private let shutterButton: UIButton = {
@@ -45,7 +45,8 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         button.layer.borderColor = UIColor.lightGray.cgColor
         return button
     }()
-    // インバックカメラ切り替えボタンのラベル
+    
+    // インバックカメラ切り替えボタン
     private let flipButton: UIButton = {
         let button = UIButton(type: .system)
         button.setImage(UIImage(systemName: "camera.rotate"), for: .normal)  // カメラ切り替え用のアイコン
@@ -53,7 +54,8 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
-    // フラッシュボタンのラベル
+    
+    // フラッシュボタン
     private let flashButton: UIButton = {
         let button = UIButton(type: .system)
         button.setImage(UIImage(systemName: "bolt.slash.fill"), for: .normal) // 初期はフラッシュOFFのアイコン
@@ -72,22 +74,8 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         label.isHidden = true  // 初期状態では非表示
         return label
     }()
-
-    // 設定用の歯車アイコン
-    private let settingsButton: UIButton = {
-        let button = UIButton(type: .system)
-        button.setImage(UIImage(systemName: "gearshape"), for: .normal) // 歯車アイコン
-        button.tintColor = UIColor(red: 0.9, green: 0.8, blue: 1.0, alpha: 1.0)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
-    }()
     
-    private let imageView: UIImageView = {
-        let imageView = UIImageView()
-        imageView.contentMode = .scaleAspectFit
-        return imageView
-    }()
-    
+    // カメラロールのデータの最新画像をサムネとして表示するやつ
     private let thumbnailButton: UIButton = {
         let button = UIButton()
         button.layer.cornerRadius = 5
@@ -97,29 +85,37 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         return button
     }()
     
+    // 広角カメラ(1.0)のボタン
+    private let wideAngleButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("1.0", for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12)
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        button.layer.cornerRadius = 25 // 円形にする
+        button.clipsToBounds = true
+        return button
+    }()
+
+    // 超広角カメラ(0.5)のボタン
+    private let ultraWideButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("0.5", for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12)
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        button.layer.cornerRadius = 25 // 円形にする
+        button.clipsToBounds = true
+        return button
+    }()
+    
     // アプリ起動時のみviewDidLoadで初期設定を行う
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        // グリッド表示の通知を受け取るオブザーバーを追加
-        NotificationCenter.default.addObserver(self, selector: #selector(gridFeatureDidChange(_:)), name: .gridFeatureDidChange, object: nil)
-        
-        // 初回の設定（UserDefaultsの状態に基づいてグリッドを表示）
-        let isGridEnabled = UserDefaults.standard.bool(forKey: "gridFeatureEnabled")
-        updateGridVisibility(isGridEnabled)
-        
-        // videoPreviewLayer の上にグリッドを重ねる
-        if let previewLayer = videoPreviewLayer {
-            let gridLayer = CALayer()
-            gridLayer.frame = previewLayer.bounds
-            gridLayer.backgroundColor = UIColor.clear.cgColor
-            addGridLines(to: gridLayer)
-            
-            previewLayer.addSublayer(gridLayer)
-        }
-        
         // ViewModelの初期化と設定
         viewModel = CameraViewModel()
+        updateButtonStates()
         
         viewModel.delegate = self
         // AVCaptureSession の初期化
@@ -160,16 +156,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         // サムネイル画像を設定
         updateThumbnail()
         
-        // シャッターボタンにアクションを設定
-        shutterButton.addTarget(self, action: #selector(didTapShutterButton), for: .touchUpInside)
-        // フラッシュボタンのアクションを設定
-        flashButton.addTarget(self, action: #selector(toggleFlash), for: .touchUpInside)
-        //インバックカメラ切り替えアクション設定
-        flipButton.addTarget(self, action: #selector(flipButtonTapped), for: .touchUpInside)
-        // タップ時に設定画面へ遷移
-        settingsButton.addTarget(self, action: #selector(didTapSettingsButton), for: .touchUpInside)
-        // ボタンのタップアクションを追加
-        thumbnailButton.addTarget(self, action: #selector(thumbnailTapped), for: .touchUpInside)
+        
         
         // アプリ起動時はフラッシュをオフに設定
         isFlashOn = false
@@ -184,19 +171,12 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         // カメラ画面が再度表示されるたびにフラッシュ状態をリセット
         isFlashOn = false
         updateFlashButtonIcon(isFlashOn: isFlashOn)
-        
-        // 再表示時にグリッドの状態を再確認
-        let isGridEnabled = UserDefaults.standard.bool(forKey: "gridFeatureEnabled")
-        updateGridVisibility(isGridEnabled)
     }
     
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         
         captureSession?.stopRunning() // バックグラウンドへ移動中はリソースを節約したい
-        
-        // 通知オブザーバーを解除
-        NotificationCenter.default.removeObserver(self, name: .gridFeatureDidChange, object: nil)
     }
     
     // カメラのフレームごとに呼ばれる
@@ -226,36 +206,6 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         // プレビューを画面にフィットさせカメラレイヤーを1番下に設置
         view.layer.sublayers?.removeAll()  // これで古いレイヤーを削除
         view.layer.insertSublayer(previewLayer, at: 0)
-    }
-    
-    // 通知でグリッドの表示状態が変更されたときに呼ばれる
-    @objc private func gridFeatureDidChange(_ notification: Notification) {
-        if let isEnabled = notification.object as? Bool {
-            updateGridVisibility(isEnabled)
-        }
-    }
-
-    // グリッドの表示/非表示を更新する
-    private func updateGridVisibility(_ isEnabled: Bool) {
-        if isEnabled {
-            // グリッドを表示する
-            if let videoPreviewFrame = videoPreviewLayer?.frame {
-                let gridView = UIView(frame: videoPreviewFrame)
-                gridView.backgroundColor = UIColor.clear // 背景は透明
-                gridView.layer.borderColor = UIColor.lightGray.cgColor
-                gridView.layer.borderWidth = 1.0
-                addGridLines(to: gridView.layer)
-
-                view.addSubview(gridView)
-                gridOverlayView = gridView
-                // タッチイベントを無効化
-                gridView.isUserInteractionEnabled = false
-            }
-        } else {
-            // グリッドを非表示にする
-            gridOverlayView?.removeFromSuperview()
-            gridOverlayView = nil
-        }
     }
     
     // ビューのレイアウトが変更される直前に呼び出される。フレームを再調整する
@@ -294,11 +244,6 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             layer.addSublayer(horizontalLine)
         }
     }
-
-    // インスタンス解放時に通知のオブザーバー登録を解除してメモリリークを防ぐ
-    deinit {
-        NotificationCenter.default.removeObserver(self, name: .gridFeatureDidChange, object: nil)
-    }
     
     // UIのセットアップ
     private func setupUI() {
@@ -306,14 +251,17 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         view.addSubview(flashButton)      // フラッシュボタン
         view.addSubview(countdownLabel)   // カウントダウンラベル
         view.addSubview(flipButton)       // フリップボタン
-        view.addSubview(settingsButton)   // 歯車ボタン
-        view.addSubview(thumbnailButton)
+        view.addSubview(thumbnailButton)  // カメラロールから持ってきたサムネを表示（新しい順）
+        view.addSubview(wideAngleButton)  // 広角カメラ(1.0)のボタン
+        view.addSubview(ultraWideButton)  // 超広角カメラ(0.5)のボタン
 
         shutterButton.translatesAutoresizingMaskIntoConstraints = false
         countdownLabel.translatesAutoresizingMaskIntoConstraints = false
         flashButton.translatesAutoresizingMaskIntoConstraints = false
         thumbnailButton.translatesAutoresizingMaskIntoConstraints = false
-
+        wideAngleButton.translatesAutoresizingMaskIntoConstraints = false
+        ultraWideButton.translatesAutoresizingMaskIntoConstraints = false
+        
         // シャッターボタンのレイアウト
         NSLayoutConstraint.activate([
             shutterButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -344,14 +292,6 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             flipButton.heightAnchor.constraint(equalToConstant: 50)
         ])
         
-        // 歯車ボタンのレイアウト
-        NSLayoutConstraint.activate([
-            settingsButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 20),
-            settingsButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
-            settingsButton.widthAnchor.constraint(equalToConstant: 30),
-            settingsButton.heightAnchor.constraint(equalToConstant: 30)
-        ])
-        
         // サムネイルボタンのレイアウト
         NSLayoutConstraint.activate([
             thumbnailButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
@@ -359,6 +299,49 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             thumbnailButton.widthAnchor.constraint(equalToConstant: 60),
             thumbnailButton.heightAnchor.constraint(equalToConstant: 60)
         ])
+        
+        NSLayoutConstraint.activate([
+            wideAngleButton.widthAnchor.constraint(equalToConstant: 50),
+            wideAngleButton.heightAnchor.constraint(equalToConstant: 50),
+            wideAngleButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 230),
+            wideAngleButton.centerXAnchor.constraint(equalTo: view.centerXAnchor, constant: -60),
+        ])
+
+        NSLayoutConstraint.activate([
+            ultraWideButton.widthAnchor.constraint(equalToConstant: 50),
+            ultraWideButton.heightAnchor.constraint(equalToConstant: 50),
+            ultraWideButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 230),
+            ultraWideButton.centerXAnchor.constraint(equalTo: view.centerXAnchor, constant: 60)
+        ])
+        
+        // シャッターボタンにアクションを設定
+        shutterButton.addTarget(self, action: #selector(didTapShutterButton), for: .touchUpInside)
+        // フラッシュボタンのアクションを設定
+        flashButton.addTarget(self, action: #selector(toggleFlash), for: .touchUpInside)
+        //インバックカメラ切り替えアクション設定
+        flipButton.addTarget(self, action: #selector(flipButtonTapped), for: .touchUpInside)
+        
+        // ボタンのタップアクションを追加
+        thumbnailButton.addTarget(self, action: #selector(thumbnailTapped), for: .touchUpInside)
+        
+        wideAngleButton.addTarget(self, action: #selector(didTapWideAngleButton), for: .touchUpInside)
+        ultraWideButton.addTarget(self, action: #selector(didTapUltraWideButton), for: .touchUpInside)
+    }
+    
+    @objc private func didTapWideAngleButton() {
+        viewModel.switchToWideAngle()
+        updateButtonStates()
+    }
+
+    @objc private func didTapUltraWideButton() {
+        viewModel.switchToUltraWide()
+        updateButtonStates()
+    }
+    
+    // ボタンの状態を更新
+    private func updateButtonStates() {
+        wideAngleButton.isEnabled = viewModel.canSwitchToWideAngle
+        ultraWideButton.isEnabled = viewModel.canSwitchToUltraWide
     }
     
     // フラッシュボタンのアイコンを更新する
@@ -392,34 +375,54 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             viewModel.capturePhoto()  // ViewModelに写真撮影を依頼
         }
     }
+    
     // フラッシュボタン設置
     @objc func toggleFlash() {
-        // フラッシュの点灯/消灯を制御
-        guard let device = AVCaptureDevice.default(for: .video), device.hasTorch else {
-            print("エラー: カメラが利用できないか、またはトーチがサポートされていません")
+        // 現在使用中のカメラデバイスを取得
+        guard let device = viewModel.currentDevice, device.hasTorch else {
+            print("エラー: カメラが利用できない、またはトーチがサポートされていません")
             return
         }
-        
+
         do {
+            // デバイス設定をロック
             try device.lockForConfiguration()
-            
-            // 現在のフラッシュ状態に応じてトーチモードを設定
+
+            // フラッシュのオン/オフを切り替え
             if isFlashOn {
-                device.torchMode = .off  // フラッシュをオフに
+                // フラッシュをオフ
+                device.torchMode = .off
+                print("フラッシュをオフにしました")
             } else {
-                try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)  // フラッシュをオンに
+                // フラッシュをオン（最大強度で設定）
+                if device.isTorchAvailable {
+                    try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+                    print("フラッシュをオンにしました")
+                } else {
+                    print("トーチが利用できません")
+                }
             }
-            
+
+            // 設定変更のロックを解除
             device.unlockForConfiguration()
-            
-            // フラッシュの状態をトグル
+
+            // フラッシュの状態を更新
             isFlashOn.toggle()
-            
-            // アイコンの更新
+
+            // UIの更新
             flashButton.setImage(UIImage(systemName: isFlashOn ? "bolt.fill" : "bolt.slash.fill"), for: .normal)
-            
+
         } catch {
             print("トーチの切り替え中にエラーが発生しました: \(error)")
+            device.unlockForConfiguration()
+        }
+
+        // セッションの再構成（プレビューが停止しないようにする）
+        DispatchQueue.global(qos: .userInitiated).async {
+            if !self.viewModel.captureSession.isRunning {
+                print("セッションを再開します...")
+                self.viewModel.captureSession.startRunning()
+            }
         }
     }
     
@@ -439,12 +442,6 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
                 self.view.alpha = 1.0  // 画面を元に戻す
             }
         }
-    }
-    
-    @objc private func didTapSettingsButton() {
-        // 設定画面へ遷移
-        let settingsVC = SettingsViewController()
-        navigationController?.pushViewController(settingsVC, animated: true)
     }
     
     // サムネイルがタップされた時の処理
@@ -485,6 +482,74 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             guard let self = self, let image = image else { return }
             self.thumbnailButton.setImage(image, for: .normal)
             self.capturedImage = image
+        }
+    }
+}
+
+class ZoomSelectorView: UIView {
+    var onZoomSelected: ((CGFloat) -> Void)?
+
+    private let zoomOptions: [CGFloat] = [0.5, 1.0]
+    private var buttons: [UIButton] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupView()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupView()
+    }
+
+    private func setupView() {
+        self.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        self.layer.cornerRadius = 10
+        self.clipsToBounds = true
+
+        let stackView = UIStackView()
+        stackView.axis = .horizontal
+        stackView.distribution = .fillEqually
+        stackView.alignment = .center
+        stackView.spacing = 8
+
+        for zoom in zoomOptions {
+            let button = UIButton(type: .system)
+            button.setTitle(zoom == 1.0 ? "1x" : "\(zoom)x", for: .normal)
+            button.tag = Int(zoom * 10)
+            button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+            button.setTitleColor(.white, for: .normal)
+            button.addTarget(self, action: #selector(zoomButtonTapped(_:)), for: .touchUpInside)
+
+            buttons.append(button) // ボタンを配列に追加
+            stackView.addArrangedSubview(button)
+        }
+
+        self.addSubview(stackView)
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: self.topAnchor, constant: 8),
+            stackView.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: -8),
+            stackView.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: 8),
+            stackView.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: -8)
+        ])
+    }
+
+    @objc private func zoomButtonTapped(_ sender: UIButton) {
+        let selectedZoom = CGFloat(sender.tag) / 10.0
+        onZoomSelected?(selectedZoom)
+        updateSelection(for: selectedZoom)
+    }
+
+    func updateSelection(for selectedZoom: CGFloat) {
+        for button in buttons {
+            if CGFloat(button.tag) / 10.0 == selectedZoom {
+                button.layer.borderColor = UIColor.yellow.cgColor
+                button.layer.borderWidth = 2
+                button.layer.cornerRadius = 5
+            } else {
+                button.layer.borderWidth = 0
+            }
         }
     }
 }

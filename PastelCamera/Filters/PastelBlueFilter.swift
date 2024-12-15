@@ -21,4 +21,3 @@ class PastelLightBlueFilter: ImageFilter {
         return filteredImage ?? image
     }
 }
-

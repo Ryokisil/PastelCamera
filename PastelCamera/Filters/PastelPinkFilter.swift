@@ -26,7 +26,3 @@ class PastelPinkFilter: ImageFilter {
         return filteredImage ?? image
     }
 }
-
-
-
-
