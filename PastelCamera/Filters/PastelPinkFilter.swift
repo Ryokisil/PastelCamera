@@ -1,28 +1,36 @@
 
-import UIKit
+import CoreImage
 
-// ImageFilterプロトコル
-protocol ImageFilter {
-    func apply(to image: UIImage) -> UIImage
-}
+class PastelPinkFilter: CIFilter, CustomFilterProtocol {
+    @objc dynamic var inputImage: CIImage?
 
-// PastelPinkFilterクラス
-class PastelPinkFilter: ImageFilter {
-    func apply(to image: UIImage) -> UIImage {
-        // 画像サイズと同じサイズのピンク色のレイヤーを作成
-        let filterColor = UIColor(red: 1.0, green: 0.8, blue: 0.9, alpha: 0.5) // パステルピンクカラー
-        let rect = CGRect(origin: .zero, size: image.size)
-        
-        UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale)
-        image.draw(in: rect)
-        
-        // ピンクのオーバーレイを重ねる
-        filterColor.setFill()
-        UIRectFillUsingBlendMode(rect, .overlay)
-        
-        let filteredImage = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        
-        return filteredImage ?? image
+    override var attributes: [String : Any] {
+        return [
+            kCIAttributeFilterDisplayName: "Pastel Pink Filter",
+            kCIInputImageKey: [
+                kCIAttributeClass: "CIImage",
+                kCIAttributeDisplayName: "Input Image",
+                kCIAttributeType: kCIAttributeTypeImage
+            ]
+        ]
+    }
+
+    override var outputImage: CIImage? {
+        guard let inputImage = inputImage else { return nil }
+
+        // ピンク色のオーバーレイを作成
+        let filterColor = CIColor(red: 1.0, green: 0.8, blue: 0.9, alpha: 0.1)
+        let colorFilter = CIFilter(name: "CIConstantColorGenerator", parameters: [kCIInputColorKey: filterColor])
+
+        guard let overlay = colorFilter?.outputImage?.cropped(to: inputImage.extent) else {
+            return inputImage
+        }
+
+        // オーバーレイと元の画像をブレンド
+        let blendFilter = CIFilter(name: "CISourceOverCompositing", parameters: [
+            kCIInputImageKey: overlay,
+            kCIInputBackgroundImageKey: inputImage
+        ])
+        return blendFilter?.outputImage
     }
 }

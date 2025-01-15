@@ -3,24 +3,44 @@ import AVFoundation
 import CoreImage
 import UIKit
 import Combine
+import Photos
 
 // ViewModel用のプロトコル定義
 protocol CameraViewModelDelegate: AnyObject {
     func didCapturePhoto(_ photo: UIImage)
-    func updateFlashButtonIcon(isFlashOn: Bool)
-    // func updateThumbnail()
+    
 }
 
-class CameraViewModel: NSObject {
+class CameraViewModel: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     
     weak var delegate: CameraViewModelDelegate?
     
-    var captureSession: AVCaptureSession!              // カメラの入力（デバイス）と出力（写真、ビデオなど）のデータフローを管理する
+    @Published var isTorchOn = false
     private var photoOutput: AVCapturePhotoOutput!     // 写真のキャプチャを管理する出力オブジェクト
-    private(set) var currentDevice: AVCaptureDevice?        // 現在使用中のカメラデバイス（広角や超広角カメラなど）を保持する
+    private(set) var currentDevice: AVCaptureDevice?   // 現在使用中のカメラデバイス（広角や超広角カメラなど）を保持する
     private(set) var isWideAngle: Bool = true          // 現在のカメラ状態(広角か超広角か)を追跡
     private(set) var isFrontCameraActive: Bool = false // インカメの追跡
-    private(set) var isFlashOn: Bool = false           // フラッシュの追跡
+    var captureSession: AVCaptureSession!              // カメラの入力（デバイス）と出力（写真、ビデオなど）のデータフローを管理する
+    var videoOutput: AVCaptureVideoDataOutput!
+    var currentFilterIndex = 0
+    // 現在のフィルターを取得
+    var currentFilter: (CIFilter & CustomFilterProtocol) {
+        return filters[currentFilterIndex]
+    }
+    // フィルタ配列をCustomFilterProtocol & CIFilterで型指定
+    var filters: [CIFilter & CustomFilterProtocol] = [
+        OriginalFilter(),
+        PastelLavenderFilter(),
+        PastelLightBlueFilter(),
+        PastelPinkFilter(),
+        PastelRoseFilter(),
+        PastelVioletFilter(),
+        PastelYellowFilter()
+    ]
+    
+    var canUseTorch: Bool {
+        return isWideAngle  // 広角なら true、超広角なら false
+    }
     
     // ボタンの有効/無効状態を取得
     var canSwitchToWideAngle: Bool {
@@ -31,55 +51,55 @@ class CameraViewModel: NSObject {
         return isWideAngle
     }
     
+    // 次のフィルターに切り替え
+    func switchToNextFilter() {
+        currentFilterIndex = (currentFilterIndex + 1) % filters.count
+        print("Switched to next filter. currentFilterIndex:", currentFilterIndex)
+        print("Current filter:", currentFilter)
+    }
+    
+    // 前のフィルターに切り替え
+    func switchToPreviousFilter() {
+        currentFilterIndex = (currentFilterIndex - 1 + filters.count) % filters.count
+        print("Switched to previous filter. currentFilterIndex:", currentFilterIndex)
+        print("Current filter:", currentFilter)
+    }
+    
     // カメラの初期設定を行う
     func setupCamera() {
-        // セッションの初期化
+        // セッション作成
         captureSession = AVCaptureSession()
         captureSession.sessionPreset = .photo
 
-        // 初期カメラデバイスの設定（広角）
-        guard let backCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+        guard let backCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+              let input = try? AVCaptureDeviceInput(device: backCamera) else {
             print("エラー: カメラが利用できません")
             return
         }
 
-        do {
-            let input = try AVCaptureDeviceInput(device: backCamera)
-            captureSession.addInput(input)
-            currentDevice = backCamera
-        } catch {
-            print("Error: \(error)")
-            return
-        }
+        captureSession.addInput(input)
 
-        // セッションの設定変更を開始
-        captureSession.beginConfiguration()
-
-        // PhotoOutputの初期化
+        // PhotoOutput 設定
         photoOutput = AVCapturePhotoOutput()
-        photoOutput.isHighResolutionCaptureEnabled = false
-
+        photoOutput?.isHighResolutionCaptureEnabled = false
         if #available(iOS 13.0, *) {
-            photoOutput.maxPhotoQualityPrioritization = .balanced
+            photoOutput?.maxPhotoQualityPrioritization = .balanced
         }
-
-        // PhotoOutputをセッションに追加
-        if captureSession.canAddOutput(photoOutput) {
+        if let photoOutput = photoOutput, captureSession.canAddOutput(photoOutput) {
             captureSession.addOutput(photoOutput)
-        } else {
-            print("エラー: 写真を追加できませんでした")
-            captureSession.commitConfiguration()
-            return
         }
 
-        // 設定変更を確定
-        captureSession.commitConfiguration()
+        // VideoOutput 設定 (リアルタイムフィルター用)
+        videoOutput = AVCaptureVideoDataOutput()
+        let queue = DispatchQueue(label: "videoQueue")
+        if captureSession.canAddOutput(videoOutput) {
+            captureSession.addOutput(videoOutput)
+        }
 
-        // セッションを開始
-        if !captureSession.isRunning {
-            DispatchQueue.global(qos: .userInitiated).async {
-                self.captureSession.startRunning()
-            }
+        // セッション開始
+        DispatchQueue.global(qos: .background).async {
+            self.captureSession.startRunning()
+            print("Capture session started in background thread")
         }
     }
 
@@ -128,39 +148,30 @@ class CameraViewModel: NSObject {
         captureSession.commitConfiguration()
     }
     
-    // 写真を撮影する際の設定
-    func createPhotoSettings() -> AVCapturePhotoSettings {
-        print("createPhotoSettings()内のisFlashOn: \(isFlashOn)")
-        let settings = AVCapturePhotoSettings()
-
-        // フラッシュモードの設定
-        settings.flashMode = isFlashOn ? .on : .off
-
-        // フラッシュモードの確認
-        print("設定されたフラッシュモード: \(settings.flashMode.rawValue)")
-
-        // **photoOutputがフラッシュモードをサポートしているかを確認**
-        if photoOutput.supportedFlashModes.contains(settings.flashMode) {
-            print("フラッシュモードをサポートしています")
-        } else {
-            print("フラッシュモードをサポートしていません")
+    // トーチの設定（フラッシュ）
+    func toggleTorch(isOn: Bool) {
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera,for: .video, position: .back),
+              device.hasTorch else {
+            return
         }
-
-        return settings
-    }
-    
-    // カメラで写真を撮影する処理
-    func capturePhoto() {
-        print("写真撮影を開始")
-
-        let settings = AVCapturePhotoSettings()
-
-        // 写真撮影を実行
-        photoOutput.capturePhoto(with: settings, delegate: self)
+        do {
+            try device.lockForConfiguration()
+            if isOn {
+                try device.setTorchModeOn(level: 1.0) // 0.0~1.0
+            } else {
+                device.torchMode = .off
+            }
+            device.unlockForConfiguration()
+            
+            // 内部状態も更新するなら
+            isTorchOn = isOn
+        } catch {
+            print("Torch could not be used: \(error)")
+        }
     }
     
     //カメラのフロントとバックを切り替える関数
-    func flipCamera() {
+    func flipBackandFrontCamera() {
         // 現在の入力デバイスを取得
         guard let currentInput = captureSession.inputs.first as? AVCaptureDeviceInput else {
             return
@@ -200,9 +211,115 @@ class CameraViewModel: NSObject {
             
             // 設定変更を確定
             captureSession.commitConfiguration()
+            updatePreviewMirroring(isFrontCamera: isFrontCameraActive)
         } catch {
             print("Error: \(error)")
         }
+    }
+    
+    // インカメの時のプレビュー向きを調整
+    func updatePreviewMirroring(isFrontCamera: Bool) {
+        guard let connection = videoOutput.connection(with: .video) else {
+            return
+        }
+        
+        // ミラーリング
+        connection.automaticallyAdjustsVideoMirroring = false
+        connection.isVideoMirrored = isFrontCamera
+        
+        // 回転設定
+        if connection.isVideoOrientationSupported {
+            connection.videoOrientation = .landscapeRight
+        }
+    }
+}
+
+// 最新の写真サムネイルを扱うViewModel
+final class PhotoViewModel: NSObject, PHPhotoLibraryChangeObserver {
+    
+    private(set) var latestThumbnail: UIImage?    // サムネイルの最新の写真
+    var onThumbnailUpdated: ((UIImage?) -> Void)? // 新しい写真を取得したら呼ばれる通知クロージャ
+    
+    // フォトライブラリで取得したFetchResult
+    private var fetchResult: PHFetchResult<PHAsset>?
+    
+    override init() {
+        super.init()
+        // フォトライブラリの変更を受け取るよう登録
+        PHPhotoLibrary.shared().register(self)
+        // 初回ロード時に最新写真を取得
+        fetchLatestPhoto()
+    }
+    
+    // 最新の写真を取得してサムネイル更新
+    func fetchLatestPhoto() {
+        let fetchOptions = PHFetchOptions()
+        // creationDate降順で1枚だけ取得
+        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        fetchOptions.fetchLimit = 1
+        
+        // 写真アセットを取得
+        let result = PHAsset.fetchAssets(with: .image, options: fetchOptions)
+        if let asset = result.firstObject {
+            // 実際のサムネ画像を取得
+            getThumbnail(for: asset) { [weak self] image in
+                guard let self = self else { return }
+                self.latestThumbnail = image
+                // クロージャでViewControllerに通知
+                self.onThumbnailUpdated?(image)
+            }
+        }
+        
+        // 今取得したFetchResultを保持しておき、ライブラリ変更時に差分をとる
+        fetchResult = result
+    }
+    
+    // 指定したPHAssetからサムネイルUIImageを生成
+    private func getThumbnail(for asset: PHAsset, completion: @escaping (UIImage?) -> Void) {
+        let manager = PHImageManager.default()
+        let scale = UIScreen.main.scale
+        // サムネイルのサイズ（適宜調整）
+        let size = CGSize(width: 200 * scale, height: 200 * scale)
+        
+        let options = PHImageRequestOptions()
+        options.isSynchronous = false
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .exact
+        
+        manager.requestImage(
+            for: asset,
+            targetSize: size,
+            contentMode: .aspectFill,
+            options: options
+        ) { image, info in
+            completion(image)
+        }
+    }
+    
+    // フォトライブラリに変更があったとき呼ばれる
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        // 既にfetchResultを持っていたら、それに対する差分を取得
+        guard let fetchResult = fetchResult,
+              let details = changeInstance.changeDetails(for: fetchResult) else {
+            return
+        }
+        
+        // 最新のFetchResultに差し替え
+        let updatedResult = details.fetchResultAfterChanges
+        self.fetchResult = updatedResult
+        
+        // もし新しい写真が追加されていたらサムネ更新を行う
+        let inserted = details.insertedObjects
+        if !inserted.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                self?.fetchLatestPhoto()
+            }
+        }
+    }
+    
+    deinit {
+        // ViewModel破棄時にリスナー解除
+        PHPhotoLibrary.shared().unregisterChangeObserver(self)
     }
 }
 
@@ -265,57 +382,5 @@ class PhotoProcessor {
         // 新しいCGImageを作成し、UIImageに変換
         guard let newCGImage = context.makeImage() else { return nil }
         return UIImage(cgImage: newCGImage)
-    }
-}
-
-// 写真が撮影された後に呼ばれるコード
-extension CameraViewModel: AVCapturePhotoCaptureDelegate {
-    func photoOutput(_ output: AVCapturePhotoOutput,didFinishProcessingPhoto photo: AVCapturePhoto,error: Error?) {
-        // エラーチェック
-        if let error = error {
-            print("Error: \(error.localizedDescription)")
-            return
-        }
-
-        // 写真データの取得
-        guard let photoData = photo.fileDataRepresentation(),
-              let image = UIImage(data: photoData) else {
-            print("エラー: 写真をキャプチャできませんでした")
-            return
-        }
-        
-        // カメラロールに保存
-        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-        print("写真をカメラロールに保存しました")
-        
-        // 撮影後にフラッシュの状態を初期化（オフに戻す）
-        isFlashOn = false
-        
-        // アイコンもオフの状態にリセット
-        delegate?.updateFlashButtonIcon(isFlashOn: false)
-        
-        // フラッシュの物理的な状態もオフに
-        guard let device = AVCaptureDevice.default(for: .video), device.hasTorch else {
-            print("エラー: トーチが利用できません")
-            return
-        }
-        
-        do {
-            try device.lockForConfiguration()
-            device.torchMode = .off  // フラッシュを物理的にオフに
-            device.unlockForConfiguration()
-        } catch {
-            print("エラー: トーチをオフにする際に問題が発生しました: \(error)")
-        }
-        
-        let originalImage = image
-        // オリジナル画像が正常に取得された場合
-        delegate?.didCapturePhoto(originalImage)
-        
-        guard let photoData = photo.fileDataRepresentation(),
-              let currentImage = UIImage(data: photoData) else {
-            print("エラー: 写真データが取得できませんでした。")
-            return
-        }
     }
 }

@@ -4,6 +4,9 @@ import UIKit
 import AVFoundation
 import SwiftUI
 import Photos
+import CoreImage
+import Combine
+import AudioToolbox
 
 // UIViewControllerをSwiftUIで使えるようにする
 struct CameraViewControllerRepresentable: UIViewControllerRepresentable {
@@ -17,24 +20,32 @@ struct CameraViewControllerRepresentable: UIViewControllerRepresentable {
     }
 }
 
-class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, CameraViewModelDelegate {
+class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, CameraViewModelDelegate {
     func didCapturePhoto(_ photo: UIImage) {
-        // サムネイルの更新（例として表示）
+        // サムネイルの更新
         thumbnailButton.setImage(photo, for: .normal)
         // 撮影した画像を capturedImage にセット
         capturedImage = photo
-        
-        // サムネイルを更新（例として表示用に使用）
-        thumbnailButton.setImage(photo, for: .normal)
     }
     
-    var viewModel: CameraViewModel!                       // ViewModelのインスタンス。データ管理とUIロジックを担当
+    private let thumbnailImageView = UIImageView()
+    private var frameCounter = 0
+    private var viewModel = CameraViewModel()                      // ViewModelのインスタンス。データ管理とUIロジックを担当
+    private let photoViewModel = PhotoViewModel()
+    private var cancellables = Set<AnyCancellable>()
+    var shutterSoundID: SystemSoundID = 0
     var isFlashOn = false                                 // フラッシュのオン/オフ状態を保持するフラグ
-    var captureSession: AVCaptureSession?                 // カメラのキャプチャセッション。映像入力の設定を管理する
+    var latestFilteredImage: UIImage?
     var capturedImage: UIImage?                           // サムネイルに表示する撮影済みの画像
-    var videoPreviewLayer: AVCaptureVideoPreviewLayer?    // ビデオプレビューを表示するレイヤー（プレビュー画面に表示するため）
-    private var previewLayer: AVCaptureVideoPreviewLayer! // カメラのプレビューを表示するレイヤー
-    private var gridOverlayView: UIView?                  // カメラのグリッドオーバーレイ表示用のビュー
+    var ciContext: CIContext!
+    var filters: [CIFilter] = []
+    var currentFilterIndex = 0
+    var imageView: UIImageView = {
+        let imageView = UIImageView()
+        imageView.contentMode = .scaleAspectFill
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
         
     // シャッターボタン
     private let shutterButton: UIButton = {
@@ -62,17 +73,6 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         button.tintColor = UIColor(red: 0.75, green: 1.0, blue: 0.85, alpha: 1.0)
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
-    }()
-
-    // カウントダウン表示用のラベル
-    private let countdownLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont.boldSystemFont(ofSize: 80)
-        label.textColor = UIColor(red: 1.0, green: 0.9, blue: 0.8, alpha: 1.0)
-        label.textAlignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.isHidden = true  // 初期状態では非表示
-        return label
     }()
     
     // カメラロールのデータの最新画像をサムネとして表示するやつ
@@ -118,31 +118,6 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         updateButtonStates()
         
         viewModel.delegate = self
-        // AVCaptureSession の初期化
-        captureSession = AVCaptureSession()
-        
-        guard let captureDevice = AVCaptureDevice.default(for: .video) else { return }
-        
-        do {
-            let input = try AVCaptureDeviceInput(device: captureDevice)
-            captureSession?.addInput(input)
-            
-            let videoOutput = AVCaptureVideoDataOutput()
-            videoOutput.setSampleBufferDelegate(self, queue: DispatchQueue(label: "videoQueue"))
-            captureSession?.addOutput(videoOutput)
-            
-            videoPreviewLayer = AVCaptureVideoPreviewLayer(session: captureSession!)
-            videoPreviewLayer?.videoGravity = .resizeAspectFill
-            videoPreviewLayer?.frame = view.layer.bounds
-            view.layer.addSublayer(videoPreviewLayer!)
-            
-            DispatchQueue.global(qos: .userInitiated).async {
-                    self.captureSession?.startRunning()
-            }
-            
-        } catch {
-            print("カメラの設定中にエラーが発生しました: \(error)")
-        }
         
         // カメラの設定をViewModelに任せる
         viewModel.setupCamera()
@@ -152,115 +127,108 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         
         // UIのセットアップ
         setupUI()
+        self.view.bringSubviewToFront(wideAngleButton) //　UIを一番手前に設置
+        self.view.bringSubviewToFront(ultraWideButton) // UIを一番手前に設置
         
-        // サムネイル画像を設定
-        updateThumbnail()
+        // MP3ファイルから SystemSoundID を作成
+        if let soundURL = Bundle.main.url(forResource: "Camera-Phone01-1", withExtension: "mp3") {
+            AudioServicesCreateSystemSoundID(soundURL as CFURL, &shutterSoundID)
+        }
         
+        // photoViewModelから「サムネイル更新」の通知を受け取る
+        photoViewModel.onThumbnailUpdated = { [weak self] image in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                self.thumbnailButton.setImage(image, for: .normal)
+                self.capturedImage = image
+            }
+        }
         
+        ciContext = CIContext()
         
-        // アプリ起動時はフラッシュをオフに設定
-        isFlashOn = false
-        flashButton.setImage(UIImage(systemName: "bolt.slash.fill"), for: .normal)
+        addSwipeGestures()
         
     } // viewDidLoad
     
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        
+        if let videoOutput = viewModel.videoOutput {
+            let queue = DispatchQueue(label: "videoQueue")
+            videoOutput.setSampleBufferDelegate(self, queue: queue)
+        }
+    }
+    
     // 初回撮影後に再度カメラプレビュー画面に戻ったらそれ以降はviewWillAppearで状態管理する
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        
-        // カメラ画面が再度表示されるたびにフラッシュ状態をリセット
-        isFlashOn = false
-        updateFlashButtonIcon(isFlashOn: isFlashOn)
-    }
-    
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        
-        captureSession?.stopRunning() // バックグラウンドへ移動中はリソースを節約したい
-    }
-    
-    // カメラのフレームごとに呼ばれる
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        // 映像フレームごとに処理を行う
-    }
+//    override func viewWillAppear(_ animated: Bool) {
+//        super.viewWillAppear(animated)
+//        
+//        
+//    }
+//    
+//    override func viewDidDisappear(_ animated: Bool) {
+//        super.viewDidDisappear(animated)
+//        
+//    }
 
     // カメラプレビューのセットアップ
     private func setupCameraPreview() {
-
-        // プレビュー用のレイヤーを設定
-        previewLayer = AVCaptureVideoPreviewLayer(session: viewModel.captureSession)
-        // 解像度に応じたアスペクト比の変更を適用
-        switch viewModel.captureSession.sessionPreset {
-        case .photo: // 4:3
-            previewLayer.videoGravity = .resizeAspect  // 4:3
-        case .high, .medium: // 16:9
-            previewLayer.videoGravity = .resizeAspectFill  // 16:9
-        default:
-            previewLayer.videoGravity = .resizeAspect  // デフォルトは4:3
+        guard let captureSession = viewModel.captureSession else {
+            print("captureSessionがまだ初期化されていません")
+            return
         }
-        
-        // プレビューの位置とサイズを設定
-        let previewHeight = view.bounds.height * 0.8
-        previewLayer.frame = CGRect(x: 0, y: 50, width: view.bounds.width, height: previewHeight)
-        
-        // プレビューを画面にフィットさせカメラレイヤーを1番下に設置
-        view.layer.sublayers?.removeAll()  // これで古いレイヤーを削除
-        view.layer.insertSublayer(previewLayer, at: 0)
     }
     
-    // ビューのレイアウトが変更される直前に呼び出される。フレームを再調整する
-    override func viewWillLayoutSubviews() {
-        super.viewWillLayoutSubviews()
+    func addSwipeGestures() {
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
+        swipeLeft.direction = .left
+        view.addGestureRecognizer(swipeLeft)
         
-        guard let videoPreviewLayer = videoPreviewLayer else { return }
-
-        // 画面幅を基準に4:3アスペクト比の高さを設定
-        let screenWidth = view.bounds.width
-        let previewHeight = screenWidth * 4 / 3
-
-        // videoPreviewLayerとgridOverlayViewにフレームを適用
-        let yOffset = (view.bounds.height - previewHeight) / 2 + 12
-        let previewFrame = CGRect(x: 0, y: yOffset, width: screenWidth, height: previewHeight)
-
-        videoPreviewLayer.frame = previewFrame
-        gridOverlayView?.frame = previewFrame
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
+        swipeRight.direction = .right
+        view.addGestureRecognizer(swipeRight)
     }
-
-    // 指定したレイヤーにグリッド線を描画する
-    private func addGridLines(to layer: CALayer) {
-        let lineColor = UIColor.lightGray.cgColor
-        
-        // 縦線を追加
-        for i in 1..<3 {
-            let verticalLine = CALayer()
-            verticalLine.backgroundColor = lineColor
-            verticalLine.frame = CGRect(x: layer.bounds.width * CGFloat(i) / 3, y: 0, width: 1, height: layer.bounds.height)
-            layer.addSublayer(verticalLine)
-
-            // 横線を追加
-            let horizontalLine = CALayer()
-            horizontalLine.backgroundColor = lineColor
-            horizontalLine.frame = CGRect(x: 0, y: layer.bounds.height * CGFloat(i) / 3, width: layer.bounds.width, height: 1)
-            layer.addSublayer(horizontalLine)
+    
+    @objc func handleSwipe(_ gesture: UISwipeGestureRecognizer) {
+        if gesture.direction == .left {
+            viewModel.switchToNextFilter()
+        } else if gesture.direction == .right {
+            viewModel.switchToPreviousFilter()
         }
+
+        print("現在のフィルター: \(viewModel.currentFilter)")
+    }
+    
+    // カメラで写真を撮影する処理
+    func capturePhoto() {
+        print("写真撮影を開始")
+        // latestFilteredImage が存在するならそれを保存
+        guard let imageToSave = latestFilteredImage else {
+            print("フィルタ適用後の画像がまだありません")
+            return
+        }
+
+        // カメラロールへ保存
+        UIImageWriteToSavedPhotosAlbum(imageToSave, nil, nil, nil)
+        print("フィルタ適用済み画像を保存しました")
     }
     
     // UIのセットアップ
     private func setupUI() {
         view.addSubview(shutterButton)    // 撮影ボタン
         view.addSubview(flashButton)      // フラッシュボタン
-        view.addSubview(countdownLabel)   // カウントダウンラベル
         view.addSubview(flipButton)       // フリップボタン
         view.addSubview(thumbnailButton)  // カメラロールから持ってきたサムネを表示（新しい順）
         view.addSubview(wideAngleButton)  // 広角カメラ(1.0)のボタン
         view.addSubview(ultraWideButton)  // 超広角カメラ(0.5)のボタン
+        view.addSubview(imageView)        // 各種フィルター
 
         shutterButton.translatesAutoresizingMaskIntoConstraints = false
-        countdownLabel.translatesAutoresizingMaskIntoConstraints = false
         flashButton.translatesAutoresizingMaskIntoConstraints = false
         thumbnailButton.translatesAutoresizingMaskIntoConstraints = false
         wideAngleButton.translatesAutoresizingMaskIntoConstraints = false
         ultraWideButton.translatesAutoresizingMaskIntoConstraints = false
+        imageView.translatesAutoresizingMaskIntoConstraints = false
         
         // シャッターボタンのレイアウト
         NSLayoutConstraint.activate([
@@ -270,18 +238,12 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             shutterButton.heightAnchor.constraint(equalToConstant: 70)
         ])
 
-        // フラッシュボタンのレイアウト（シャッターボタンの左側に配置）
+        // フラッシュボタンのレイアウト
         NSLayoutConstraint.activate([
-            flashButton.centerYAnchor.constraint(equalTo: shutterButton.centerYAnchor, constant: -5),
-            flashButton.trailingAnchor.constraint(equalTo: shutterButton.leadingAnchor, constant: -20),
+            flashButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20), // 画面右端から20pt離す
+            flashButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),   // 画面下端から20pt離す
             flashButton.widthAnchor.constraint(equalToConstant: 50),
             flashButton.heightAnchor.constraint(equalToConstant: 50)
-        ])
-
-        // カウントダウンラベルを画面の中央に配置したい
-        NSLayoutConstraint.activate([
-            countdownLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            countdownLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor)
         ])
         
         // フリップボタンのレイアウト
@@ -300,13 +262,15 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             thumbnailButton.heightAnchor.constraint(equalToConstant: 60)
         ])
         
+        // 広角カメラのレイアウト
         NSLayoutConstraint.activate([
             wideAngleButton.widthAnchor.constraint(equalToConstant: 50),
             wideAngleButton.heightAnchor.constraint(equalToConstant: 50),
             wideAngleButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 230),
             wideAngleButton.centerXAnchor.constraint(equalTo: view.centerXAnchor, constant: -60),
         ])
-
+        
+        // 超広角カメラのレイアウト
         NSLayoutConstraint.activate([
             ultraWideButton.widthAnchor.constraint(equalToConstant: 50),
             ultraWideButton.heightAnchor.constraint(equalToConstant: 50),
@@ -314,28 +278,38 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             ultraWideButton.centerXAnchor.constraint(equalTo: view.centerXAnchor, constant: 60)
         ])
         
-        // シャッターボタンにアクションを設定
+        // フィルター
+        NSLayoutConstraint.activate([
+            imageView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            imageView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            imageView.widthAnchor.constraint(equalTo: view.widthAnchor),
+            imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor, multiplier: 3.0/4.0)
+        ])
+        
+        // シャッターボタンに撮影アクション
         shutterButton.addTarget(self, action: #selector(didTapShutterButton), for: .touchUpInside)
-        // フラッシュボタンのアクションを設定
-        flashButton.addTarget(self, action: #selector(toggleFlash), for: .touchUpInside)
-        //インバックカメラ切り替えアクション設定
+        // フラッシュボタンのアクション
+        flashButton.addTarget(self, action: #selector(didTapFlashButton), for: .touchUpInside)
+        // インバックカメラ切り替えアクション
         flipButton.addTarget(self, action: #selector(flipButtonTapped), for: .touchUpInside)
-        
-        // ボタンのタップアクションを追加
+        // カメラロールから取得してるサムネボタンのタップアクション
         thumbnailButton.addTarget(self, action: #selector(thumbnailTapped), for: .touchUpInside)
-        
+        // 広角カメラ切り替えアクション
         wideAngleButton.addTarget(self, action: #selector(didTapWideAngleButton), for: .touchUpInside)
+        // 超広角カメラ切り替えアクション
         ultraWideButton.addTarget(self, action: #selector(didTapUltraWideButton), for: .touchUpInside)
     }
     
     @objc private func didTapWideAngleButton() {
         viewModel.switchToWideAngle()
         updateButtonStates()
+        flashButton.isHidden = false
     }
 
     @objc private func didTapUltraWideButton() {
         viewModel.switchToUltraWide()
         updateButtonStates()
+        flashButton.isHidden = true
     }
     
     // ボタンの状態を更新
@@ -343,100 +317,41 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         wideAngleButton.isEnabled = viewModel.canSwitchToWideAngle
         ultraWideButton.isEnabled = viewModel.canSwitchToUltraWide
     }
-    
-    // フラッシュボタンのアイコンを更新する
-    func updateFlashButtonIcon(isFlashOn: Bool) {
-        let flashIconName = isFlashOn ? "bolt.fill" : "bolt.slash.fill"
-        flashButton.setImage(UIImage(systemName: flashIconName), for: .normal)
-    }
         
     // シャッターボタン押下時のアクション
     @objc private func didTapShutterButton() {
-        startCountdown()
+        capturePhoto()
+        AudioServicesPlaySystemSound(shutterSoundID)
     }
-
-    // カウントダウンを開始する
-    private func startCountdown() {
-        countdownLabel.isHidden = false
-        countdown(from: 3)
-    }
-
-    // カウントダウン処理
-    private func countdown(from count: Int) {
-        countdownLabel.text = "\(count)"
+    
+    @objc private func didTapFlashButton() {
+        // ここで「現在の状態」を反転させてトーチをオン/オフ切り替え
+        let newIsOn = !viewModel.isTorchOn
         
-        if count > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                self.countdown(from: count - 1)
-            }
-        } else {
-            // カウントダウンが終了したら写真を撮影
-            countdownLabel.isHidden = true
-            viewModel.capturePhoto()  // ViewModelに写真撮影を依頼
-        }
+        // トーチを操作 (ViewModel 側に書いてある toggleTorch(isOn:) を呼ぶ)
+        viewModel.toggleTorch(isOn: newIsOn)
+        
+        // UIアイコンを更新 (オンなら "bolt.fill", オフなら "bolt.slash.fill")
+        let iconName = newIsOn ? "bolt.fill" : "bolt.slash.fill"
+        flashButton.setImage(UIImage(systemName: iconName), for: .normal)
+        
+        // ViewModel がトーチの状態を保持しているなら、そこも更新
+        viewModel.isTorchOn = newIsOn
     }
     
-    // フラッシュボタン設置
-    @objc func toggleFlash() {
-        // 現在使用中のカメラデバイスを取得
-        guard let device = viewModel.currentDevice, device.hasTorch else {
-            print("エラー: カメラが利用できない、またはトーチがサポートされていません")
-            return
-        }
-
-        do {
-            // デバイス設定をロック
-            try device.lockForConfiguration()
-
-            // フラッシュのオン/オフを切り替え
-            if isFlashOn {
-                // フラッシュをオフ
-                device.torchMode = .off
-                print("フラッシュをオフにしました")
-            } else {
-                // フラッシュをオン（最大強度で設定）
-                if device.isTorchAvailable {
-                    try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
-                    print("フラッシュをオンにしました")
-                } else {
-                    print("トーチが利用できません")
-                }
-            }
-
-            // 設定変更のロックを解除
-            device.unlockForConfiguration()
-
-            // フラッシュの状態を更新
-            isFlashOn.toggle()
-
-            // UIの更新
-            flashButton.setImage(UIImage(systemName: isFlashOn ? "bolt.fill" : "bolt.slash.fill"), for: .normal)
-
-        } catch {
-            print("トーチの切り替え中にエラーが発生しました: \(error)")
-            device.unlockForConfiguration()
-        }
-
-        // セッションの再構成（プレビューが停止しないようにする）
-        DispatchQueue.global(qos: .userInitiated).async {
-            if !self.viewModel.captureSession.isRunning {
-                print("セッションを再開します...")
-                self.viewModel.captureSession.startRunning()
-            }
-        }
-    }
-    
-    // カメラ切り替えボタン設置と切り替え時にアニメーション追加
+    // インカメとバックカメラ切り替えボタン
     @objc func flipButtonTapped() {
         // フェードアウトアニメーション
         UIView.animate(withDuration: 0.3, animations: {
             self.view.alpha = 0.0  // 画面を一度透明にする
         }) { _ in
             // カメラの切り替えを行う
-            self.viewModel.flipCamera()
+            self.viewModel.flipBackandFrontCamera()
             
-            // フロントカメラがアクティブならフラッシュボタンを非表示にする
+            // フロントカメラがアクティブならフラッシュボタン、広角カメラボタン、超広角カメラボタンを非表示にする
             self.flashButton.isHidden = self.viewModel.isFrontCameraActive
+            self.wideAngleButton.isHidden = self.viewModel.isFrontCameraActive
+            self.ultraWideButton.isHidden = self.viewModel.isFrontCameraActive
             
             UIView.animate(withDuration: 0.3) {
                 self.view.alpha = 1.0  // 画面を元に戻す
@@ -451,37 +366,50 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             print("エラー: capturedImage が nil です")
             return
         }
+        print("OK, capturedImageあり: \(image.size)")
         
         let detailVC = PhotoDetailViewController()
-        detailVC.image = image
+        detailVC.originalImage = image
         detailVC.modalPresentationStyle = .fullScreen
-        present(detailVC, animated: true, completion: nil)
+        
+        print("Try presenting detailVC now")
+        present(detailVC, animated: true) {
+            print("Done presenting detailVC")
+        }
     }
-    
-    func updateThumbnail() {
-        // カメラロールから最新の画像を取得
-        let fetchOptions = PHFetchOptions()
-        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        fetchOptions.fetchLimit = 1
+}
 
-        let fetchResult = PHAsset.fetchAssets(with: .image, options: fetchOptions)
-        guard let latestAsset = fetchResult.firstObject else { return }
+extension CameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput,didOutput sampleBuffer: CMSampleBuffer,from connection: AVCaptureConnection) {
 
-        // サムネイルサイズでリクエストを作成
-        let imageManager = PHImageManager.default() // ここでimageManagerを定義
-        let options = PHImageRequestOptions()
-        options.isSynchronous = true
-        options.deliveryMode = .highQualityFormat
-        options.resizeMode = .exact
-        options.isNetworkAccessAllowed = true
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
 
-        let scale = UIScreen.main.scale
-        let thumbnailSize = CGSize(width: 500 * scale, height: 700 * scale)  // 必要に応じてサイズ調整
 
-        imageManager.requestImage(for: latestAsset, targetSize: thumbnailSize, contentMode: .aspectFill, options: options) { [weak self] image, _ in
-            guard let self = self, let image = image else { return }
-            self.thumbnailButton.setImage(image, for: .normal)
-            self.capturedImage = image
+        DispatchQueue.global(qos: .userInitiated).async {
+            let currentFilter = self.viewModel.currentFilter as (CustomFilterProtocol & CIFilter)
+
+            currentFilter.inputImage = ciImage
+
+            // inputImage セット後の状態をログ出力
+            if (currentFilter.inputImage) != nil {
+                //print("inputImage セット後: \(currentFilter) inputImage=\(input)")
+            } else {
+                //print("inputImage セットに失敗しました")
+            }
+
+            guard let outputImage = currentFilter.outputImage,
+                  let cgImage = self.ciContext.createCGImage(outputImage, from: outputImage.extent) else {
+                //print("フィルター処理に失敗しました")
+                return
+            }
+            //print("Got outputImage")
+            
+            DispatchQueue.main.async {
+                let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
+                self.imageView.image = uiImage
+                self.latestFilteredImage = uiImage
+            }
         }
     }
 }

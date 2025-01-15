@@ -1,23 +1,34 @@
 
-import UIKit
+import CoreImage
 
-// PastelVioletFilterクラス
-class PastelVioletFilter: ImageFilter {
-    func apply(to image: UIImage) -> UIImage {
-        // 画像サイズと同じサイズのバイオレット色のレイヤーを作成
-        let filterColor = UIColor(red: 0.84, green: 0.68, blue: 1.0, alpha: 0.5) // パステルバイオレットカラー #D6ADFF
-        let rect = CGRect(origin: .zero, size: image.size)
-        
-        UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale)
-        image.draw(in: rect)
-        
-        // バイオレットのオーバーレイを重ねる
-        filterColor.setFill()
-        UIRectFillUsingBlendMode(rect, .overlay)
-        
-        let filteredImage = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        
-        return filteredImage ?? image
+class PastelVioletFilter: CIFilter, CustomFilterProtocol {
+    @objc dynamic var inputImage: CIImage?
+
+    override var attributes: [String : Any] {
+        return [
+            kCIAttributeFilterDisplayName: "Pastel Violet Filter",
+            kCIInputImageKey: [
+                kCIAttributeClass: "CIImage",
+                kCIAttributeDisplayName: "Input Image",
+                kCIAttributeType: kCIAttributeTypeImage
+            ]
+        ]
+    }
+
+    override var outputImage: CIImage? {
+        guard let inputImage = inputImage else { return nil }
+
+        // パステルバイオレットカラー (#D6ADFF)
+        let filterColor = CIColor(red: 0.84, green: 0.68, blue: 1.0, alpha: 0.1)
+        let colorFilter = CIFilter(name: "CIConstantColorGenerator", parameters: [kCIInputColorKey: filterColor])
+        guard let overlay = colorFilter?.outputImage?.cropped(to: inputImage.extent) else {
+            return inputImage
+        }
+
+        let blendFilter = CIFilter(name: "CISourceOverCompositing", parameters: [
+            kCIInputImageKey: overlay,
+            kCIInputBackgroundImageKey: inputImage
+        ])
+        return blendFilter?.outputImage
     }
 }

@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		532968212D28F8CB005ACCFE /* Camera-Phone01-1.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 532968202D28F8CB005ACCFE /* Camera-Phone01-1.mp3 */; };
+		5366CCCC2D114612003EE081 /* CropViewController in Frameworks */ = {isa = PBXBuildFile; productRef = 5366CCCB2D114612003EE081 /* CropViewController */; };
+		5366CCCE2D114612003EE081 /* TOCropViewController in Frameworks */ = {isa = PBXBuildFile; productRef = 5366CCCD2D114612003EE081 /* TOCropViewController */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		53F793032CDA36E900EE2C5D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,6 +30,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		532968202D28F8CB005ACCFE /* Camera-Phone01-1.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "Camera-Phone01-1.mp3"; sourceTree = "<group>"; };
 		53F792F22CDA36E700EE2C5D /* PastelCamera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PastelCamera.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		53F793022CDA36E900EE2C5D /* PastelCameraTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PastelCameraTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		53F7930C2CDA36E900EE2C5D /* PastelCameraUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PastelCameraUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -80,6 +87,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5366CCCE2D114612003EE081 /* TOCropViewController in Frameworks */,
+				5366CCCC2D114612003EE081 /* CropViewController in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -103,6 +112,7 @@
 		53F792E92CDA36E700EE2C5D = {
 			isa = PBXGroup;
 			children = (
+				532968202D28F8CB005ACCFE /* Camera-Phone01-1.mp3 */,
 				53F792F42CDA36E700EE2C5D /* PastelCamera */,
 				53F7932E2CDA392D00EE2C5D /* Icons */,
 				53F793052CDA36E900EE2C5D /* PastelCameraTests */,
@@ -141,6 +151,8 @@
 			);
 			name = PastelCamera;
 			packageProductDependencies = (
+				5366CCCB2D114612003EE081 /* CropViewController */,
+				5366CCCD2D114612003EE081 /* TOCropViewController */,
 			);
 			productName = PastelCamera;
 			productReference = 53F792F22CDA36E700EE2C5D /* PastelCamera.app */;
@@ -225,6 +237,9 @@
 			);
 			mainGroup = 53F792E92CDA36E700EE2C5D;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5366CCCA2D114612003EE081 /* XCRemoteSwiftPackageReference "TOCropViewController" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 53F792F32CDA36E700EE2C5D /* Products */;
 			projectDirPath = "";
@@ -242,6 +257,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				532968212D28F8CB005ACCFE /* Camera-Phone01-1.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -424,19 +440,20 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 5GA3WVKYZ6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "カメラへのアクセスが必要です";
+				INFOPLIST_KEY_NSCameraUsageDescription = "このアプリでは写真撮影の為にカメラへのアクセスが必要です";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "写真を保存するためにフォトライブラリへのアクセスが必要です";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "フォトライブラリへのアクセスが必要です";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "このアプリでは撮影された写真を保存する為にフォトライブラリへのアクセスが必要です";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -444,9 +461,13 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.silvia.PastelCamera;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -456,19 +477,20 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 5GA3WVKYZ6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "カメラへのアクセスが必要です";
+				INFOPLIST_KEY_NSCameraUsageDescription = "このアプリでは写真撮影の為にカメラへのアクセスが必要です";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "写真を保存するためにフォトライブラリへのアクセスが必要です";
-				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "フォトライブラリへのアクセスが必要です";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "このアプリでは撮影された写真を保存する為にフォトライブラリへのアクセスが必要です";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -476,9 +498,13 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.silvia.PastelCamera;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -594,6 +620,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		5366CCCA2D114612003EE081 /* XCRemoteSwiftPackageReference "TOCropViewController" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/TimOliver/TOCropViewController";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.7.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5366CCCB2D114612003EE081 /* CropViewController */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5366CCCA2D114612003EE081 /* XCRemoteSwiftPackageReference "TOCropViewController" */;
+			productName = CropViewController;
+		};
+		5366CCCD2D114612003EE081 /* TOCropViewController */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5366CCCA2D114612003EE081 /* XCRemoteSwiftPackageReference "TOCropViewController" */;
+			productName = TOCropViewController;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 53F792EA2CDA36E700EE2C5D /* Project object */;
 }

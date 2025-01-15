@@ -5,43 +5,43 @@ import Photos
 import CoreImage
 import Foundation
 import Combine
+import TOCropViewController
 
 // CameraViewControllerDelegateの実装
 class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver {
     // PHPhotoLibraryChangeObserver プロトコルの必須メソッド
     func photoLibraryDidChange(_ changeInstance: PHChange) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            print("カメラロールが更新されました")
-            self.fetchPhotosFromCameraRoll()
+        guard let fetchResult = fetchResult else { return }
+        guard let changes = changeInstance.changeDetails(for: fetchResult) else { return }
+
+        if changes.insertedObjects.isEmpty == false {
+            // 新しい写真が挿入された場合の処理
+            print("New photo added")
+            DispatchQueue.main.async {
+                self.fetchPhotosFromCameraRoll()
+            }
+        } else if changes.removedObjects.isEmpty == false {
+            // 写真が削除された場合の処理（ゴミ箱処理を維持）
+            print("Photo removed")
+            // 必要に応じて削除後の処理を維持
         }
     }
     
     private var isTransformed = false                 // 編集中かどうかの状態管理プロパティ
-    private var doneButton = UIButton()
     private var currentIndex: Int = 0                 // 現在表示中の画像のインデックス
-    var image: UIImage?                               // 編集された画像を保持するプロパティ
     var originalImage: UIImage?                       // オリジナルの画像を保持するプロパティ
     var imageView: UIImageView!                       // 画像を表示するためのUIImageView
     var fetchResult: PHFetchResult<PHAsset>?          // カメラロールから取得したPHAssetのリスト
-    var photoDetailViewModel = PhotoDetailViewModel() // ビューモデルのインスタンス
+    var cameraViewController = CameraViewController() // ビューコントローラーのインスタンス
     var collectionView: UICollectionView!             // フィルターを表示するためのUICollectionView
     var appliedFilters: [String] = []                 // 適用されたフィルターのリスト
-    var filters: [ImageFilter] = [
-        OriginalFilter(),
-        PastelLightBlueFilter(),
-        PastelLavenderFilter(),
-        PastelPinkFilter(),
-        PastelRoseFilter(),
-        PastelVioletFilter(),
-        PastelYellowFilter()
-    ]
 
     override func viewDidLoad() {
         super.viewDidLoad()
         print("viewDidLoad: imageView is \(String(describing: imageView))")
         view.backgroundColor = .black
         fetchPhotosFromCameraRoll()
-        setupUI()  // UI セットアップを呼び出す
+        setupUI()
         if let imageView = imageView {
             displayImage(at: currentIndex, in: imageView)
         } else {
@@ -65,11 +65,12 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
         imageView.contentMode = .scaleAspectFit
         view.addSubview(imageView)
         
-        // スワイプジェスチャーの追加
+        // スワイプジェスチャー右
         let leftSwipe = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
         leftSwipe.direction = .left
         view.addGestureRecognizer(leftSwipe)
         
+        // スワイプジェスチャー左
         let rightSwipe = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
         rightSwipe.direction = .right
         view.addGestureRecognizer(rightSwipe)
@@ -79,24 +80,10 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
         swipeDown.direction = .down
         view.addGestureRecognizer(swipeDown)
         
-        // フィルターアイコンの設定
-        let filterButton = UIButton(type: .system)
-        filterButton.setImage(UIImage(systemName: "paintbrush"), for: .normal)
-        filterButton.tintColor = .white
-        filterButton.addTarget(self, action: #selector(didTapFilterButton), for: .touchUpInside)
-        filterButton.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(filterButton)
-        
-        // フィルターアイコンのレイアウト
-        NSLayoutConstraint.activate([
-            filterButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            filterButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20)
-        ])
-        
         // ゴミ箱アイコンの設定
         let trashButton = UIButton(type: .system)
         trashButton.setImage(UIImage(systemName: "trash"), for: .normal)
-        trashButton.addTarget(self, action: #selector(deletePhoto), for: .touchUpInside)
+        trashButton.addTarget(self, action: #selector(didTapDeleteButton), for: .touchUpInside)
         view.addSubview(trashButton)
         
         // ゴミボタンのレイアウト設定
@@ -109,82 +96,23 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
             trashButton.heightAnchor.constraint(equalToConstant: 44)
         ])
         
-        // Doneボタンの設定
-        doneButton = UIButton(type: .system)
-        doneButton.setTitle("Done", for: .normal)
-        doneButton.setTitleColor(.systemBlue, for: .normal) // テキスト色
-        doneButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .bold) // フォント
-        doneButton.addTarget(self, action: #selector(didTapDoneButton), for: .touchUpInside)
-        doneButton.isHidden = true
-        view.addSubview(doneButton)
-
-        // Doneボタンのレイアウト設定
-        doneButton.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            doneButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16), // 画面右端から16pt
-            doneButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16), // 画面上端から16pt
-            doneButton.widthAnchor.constraint(equalToConstant: 60), // ボタン幅
-            doneButton.heightAnchor.constraint(equalToConstant: 44) // ボタン高さ
-        ])
-    }
+        // 編集ボタン
+        let editButton = UIButton(type: .system)
+        editButton.setTitle("トリミング", for: .normal)
+        editButton.addTarget(self, action: #selector(didTapEditButton), for: .touchUpInside)
+        editButton.frame = CGRect(x: 20, y: 50, width: 100, height: 40)
+        view.addSubview(editButton)
+       
+    } // private func setupUI
     
-    // フィルターコレクションビューの設定
-    private func setupFilterCollectionView() {
-        let layout = UICollectionViewFlowLayout()
-        layout.scrollDirection = .horizontal
-        layout.itemSize = CGSize(width: 60, height: 60)
-        layout.minimumLineSpacing = 10
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collectionView.backgroundColor = .clear
-        collectionView.dataSource = self
-        collectionView.delegate = self
-        collectionView.register(FilterCollectionViewCell.self, forCellWithReuseIdentifier: "FilterCell")
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        collectionView.isHidden = true
-        view.addSubview(collectionView)
-
-        // UICollectionViewのレイアウト
-        NSLayoutConstraint.activate([
-        collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-        collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        collectionView.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 290),
-        collectionView.heightAnchor.constraint(equalToConstant: 100)
-        ])
-    }
-    
-    // doneボタンっタップ時の処理
-    @objc private func didTapDoneButton() {
-        // ビューモデルの保存処理を呼び出し
-        print("Doneボタンがタップされました") // このログが出力されるか確認
-        photoDetailViewModel.saveEditedImage { [weak self] result in
-            print("画像保存処理の結果: \(result)") // 保存処理の結果をログ出力
-            DispatchQueue.main.async {
-                switch result {
-                case .success:
-                    print("成功アラートを表示します") // ここが呼ばれているか確認
-                    self?.showSuccessAlert(message: "画像が保存されました。")
-                    self?.resetToOriginalPosition() // 元の位置に戻す処理
-                    
-                    // カメラロール更新確認用のデバッグログ
-                    let fetchOptions = PHFetchOptions()
-                    fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-                    fetchOptions.fetchLimit = 1
-                    let fetchResult = PHAsset.fetchAssets(with: .image, options: fetchOptions)
-                    
-                    if let latestAsset = fetchResult.firstObject {
-                        print("Latest photo fetched: \(latestAsset)")
-                        print("Asset creation date: \(latestAsset.creationDate ?? Date())")
-                    } else {
-                        print("Failed to fetch the latest photo from the camera roll.")
-                    }
-                    
-                case .failure(let error):
-                    print("Calling showErrorAlert") // エラー処理のログ
-                    self?.showErrorAlert(message: "保存に失敗しました: \(error.localizedDescription)")
-                }
-            }
-        }
+    @objc private func didTapEditButton() {
+        // TOCropViewControllerのインスタンスを作成
+        guard let image = originalImage else { return }
+        let cropViewController = TOCropViewController(image: image)
+        cropViewController.delegate = self
+        present(cropViewController, animated: true, completion: nil)
         provideHapticFeedback()
+        showSuccessAlert(message: "画像を保存しました")
     }
     
     // 成功時のアラート
@@ -204,63 +132,10 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
         present(alert, animated: true)
     }
     
-    private func resetToOriginalPosition() {
-        UIView.animate(withDuration: 0.3) {
-            self.imageView.transform = .identity // 元の位置に戻す
-            self.doneButton.isHidden = true // doneButton を非表示
-        } completion: { [weak self] _ in
-            guard let self = self else { return }
-            self.toggleFilterCollectionView() // フィルターコレクションを非表示に切り替え
-            self.isTransformed = false // 状態をリセット
-            
-            print("ImageView isHidden: \(self.imageView.isHidden)")
-            print("ImageView alpha: \(self.imageView.alpha)")
-
-            // リロード処理を実行
-            self.photoDetailViewModel.reloadUIAfterSave { latestAsset in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    guard let latestAsset = latestAsset else {
-                        print("新しい写真が見つかりませんでした")
-                        return
-                    }
-                    self.displayPhoto(asset: latestAsset) // 新しい写真を表示
-                }
-            }
-        }
-    }
-    
     // 少し振動するやつ　名前知らん
     func provideHapticFeedback() {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
-    }
-    
-    // フィルターボタンタップ時に写真を少し上に移動させてからフィルターコレクションビューを表示する
-    @objc private func didTapFilterButton() {
-        UIView.animate(withDuration: 0.3) {
-            if self.isTransformed {
-                // 元の位置に戻す
-                self.imageView.transform = .identity
-                self.doneButton.isHidden = true
-            } else {
-                // 上に移動する
-                self.imageView.transform = CGAffineTransform(translationX: 0, y: -50)
-                self.doneButton.isHidden = false
-            }
-        } completion: { _ in
-            // アニメーション完了後にコレクションビューを表示する
-            self.toggleFilterCollectionView()
-            self.isTransformed.toggle()
-        }
-    }
-    
-    private func toggleFilterCollectionView() {
-        if collectionView == nil {
-            setupFilterCollectionView()
-        }
-        UIView.animate(withDuration: 0.3) {
-            self.collectionView.isHidden.toggle()
-        }
     }
     
     // カメラロールから写真を取得
@@ -271,8 +146,11 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
         let fetchResult = PHAsset.fetchAssets(with: .image, options: fetchOptions)
         self.fetchResult = fetchResult
 
-        if let firstAsset = fetchResult.firstObject {
-            self.currentIndex = 0 // 最新の写真を表示するためのインデックスを設定
+        if fetchResult.firstObject != nil {
+            // 現在のインデックスが範囲外でないか確認
+            if currentIndex >= fetchResult.count {
+                currentIndex = 0
+            }
             displayImage(at: currentIndex, in: imageView)
         } else {
             print("カメラロールに画像がありません")
@@ -389,29 +267,6 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
         guard !isTransformed else { return }
         dismiss(animated: true, completion: nil)
     }
-
-    // 選択されたフィルターを適用
-    func applySelectedFilter(_ filter: ImageFilter) {
-        guard let currentImageView = imageView else { return }
-        
-        // PHAssetからオリジナル画質の画像を取得
-        if let asset = fetchResult?[currentIndex] {
-            requestOriginalImage(for: asset) { [weak self] originalImage in
-                guard let self = self, let originalImage = originalImage else { return }
-                
-                // フィルターをオリジナル画質の画像に適用
-                let filteredImage = filter.apply(to: originalImage)
-                
-                // 画質を保持したフィルター適用後の画像を表示
-                DispatchQueue.main.async {
-                    // 保存用プロパティに加工後の画像を設定
-                    self.photoDetailViewModel.selectedImage = filteredImage
-                    // UIに反映
-                    currentImageView.image = filteredImage
-                }
-            }
-        }
-    }
     
     func updateImageAndReloadFilters(with newImage: UIImage) {
         // `originalImage`プロパティを新しい画像に設定
@@ -425,7 +280,7 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
         }
     }
     
-    @objc private func deletePhoto() {
+    @objc private func didTapDeleteButton() {
         guard let fetchResult = fetchResult, currentIndex < fetchResult.count else {
             print("削除する写真が見つかりません")
             return
@@ -515,56 +370,31 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
     }
 }
 
-// データソースとデリゲートを追加するための拡張
-extension PhotoDetailViewController: UICollectionViewDataSource, UICollectionViewDelegate {
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return filters.count
+extension PhotoDetailViewController: TOCropViewControllerDelegate {
+    
+    // クロップが完了した時に呼ばれるメソッド
+    func cropViewController(_ cropViewController: TOCropViewController, didCropTo image: UIImage, with cropRect: CGRect, angle: Int) {
+        // クロップ後の画像を使用
+        self.imageView.image = image
+        self.imageView.image = cameraViewController .latestFilteredImage
+
+        // カメラロールに保存
+        UIImageWriteToSavedPhotosAlbum(image, self, #selector(saveError), nil)
+
+        cropViewController.dismiss(animated: true, completion: nil)
+    }
+    
+    // クロップがキャンセルされた時に呼ばれるメソッド
+    func cropViewControllerDidCancel(_ cropViewController: TOCropViewController) {
+        cropViewController.dismiss(animated: true, completion: nil)
     }
 
-    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "FilterCell", for: indexPath) as! FilterCollectionViewCell
-        let filter = filters[indexPath.item]  // 適用するフィルターを取得
-        
-        // 非同期でフィルターを適用
-        DispatchQueue.global(qos: .userInitiated).async {
-            let filteredImage = filter.apply(to: self.originalImage ?? UIImage())  // フィルター適用処理
-            
-            // メインスレッドでUI更新
-            DispatchQueue.main.async {
-                // セルがまだ同じインデックスか確認（セルの再利用で画像が他のセルに反映されないようにする）
-                if let currentCell = collectionView.cellForItem(at: indexPath) as? FilterCollectionViewCell {
-                    currentCell.imageView.image = filteredImage
-                }
-            }
+    // 保存時のエラーハンドリング
+    @objc func saveError(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
+        if let error = error {
+            print("保存エラー: \(error.localizedDescription)")
+        } else {
+            print("画像がカメラロールに保存されました")
         }
-        
-        return cell
-    }
-
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let selectedFilter = filters[indexPath.item]
-        applySelectedFilter(selectedFilter)
-    }
-}
-
-// FilterCollectionViewCellの定義
-class FilterCollectionViewCell: UICollectionViewCell {
-    var imageView: UIImageView!
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupImageView()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setupImageView()
-    }
-
-    private func setupImageView() {
-        imageView = UIImageView(frame: contentView.bounds)
-        imageView.contentMode = .scaleAspectFill // ここでスケーリングモードを調整
-        imageView.clipsToBounds = true // 画像がセルの枠からはみ出さないようにする
-        contentView.addSubview(imageView)
     }
 }

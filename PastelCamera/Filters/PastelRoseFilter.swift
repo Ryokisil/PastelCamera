@@ -1,23 +1,35 @@
 
-import UIKit
+import CoreImage
 
-// PastelRoseFilterクラス
-class PastelRoseFilter: ImageFilter {
-    func apply(to image: UIImage) -> UIImage {
-        // 画像サイズと同じサイズのローズ色のレイヤーを作成
-        let filterColor = UIColor(red: 1.0, green: 0.66, blue: 0.83, alpha: 0.5) // パステルローズカラー #FFA8D3
-        let rect = CGRect(origin: .zero, size: image.size)
-        
-        UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale)
-        image.draw(in: rect)
-        
-        // ローズのオーバーレイを重ねる
-        filterColor.setFill()
-        UIRectFillUsingBlendMode(rect, .overlay)
-        
-        let filteredImage = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        
-        return filteredImage ?? image
+class PastelRoseFilter: CIFilter, CustomFilterProtocol {
+    @objc dynamic var inputImage: CIImage?
+
+    override var attributes: [String : Any] {
+        return [
+            kCIAttributeFilterDisplayName: "Pastel Rose Filter",
+            kCIInputImageKey: [
+                kCIAttributeClass: "CIImage",
+                kCIAttributeDisplayName: "Input Image",
+                kCIAttributeType: kCIAttributeTypeImage
+            ]
+        ]
+    }
+
+    override var outputImage: CIImage? {
+        guard let inputImage = inputImage else { return nil }
+
+        // パステルローズカラー（#FFA8D3）
+        let filterColor = CIColor(red: 1.0, green: 0.66, blue: 0.83, alpha: 0.1)
+        let colorFilter = CIFilter(name: "CIConstantColorGenerator", parameters: [kCIInputColorKey: filterColor])
+
+        guard let overlay = colorFilter?.outputImage?.cropped(to: inputImage.extent) else {
+            return inputImage
+        }
+
+        let blendFilter = CIFilter(name: "CISourceOverCompositing", parameters: [
+            kCIInputImageKey: overlay,
+            kCIInputBackgroundImageKey: inputImage
+        ])
+        return blendFilter?.outputImage
     }
 }
