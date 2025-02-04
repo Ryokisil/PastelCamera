@@ -2,6 +2,11 @@
 import CoreImage
 
 class PastelRoseFilter: CIFilter, CustomFilterProtocol {
+    
+    var filterName: String {
+        return "PastelRoseFilter"
+    }
+    
     @objc dynamic var inputImage: CIImage?
 
     override var attributes: [String : Any] {
@@ -31,5 +36,9 @@ class PastelRoseFilter: CIFilter, CustomFilterProtocol {
             kCIInputBackgroundImageKey: inputImage
         ])
         return blendFilter?.outputImage
+    }
+    
+    deinit {
+        //print("\(filterName) が解放されました")
     }
 }

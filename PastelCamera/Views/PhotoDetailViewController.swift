@@ -21,9 +21,8 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
                 self.fetchPhotosFromCameraRoll()
             }
         } else if changes.removedObjects.isEmpty == false {
-            // 写真が削除された場合の処理（ゴミ箱処理を維持）
+            // 写真が削除された場合の処理
             print("Photo removed")
-            // 必要に応じて削除後の処理を維持
         }
     }
     
@@ -34,7 +33,6 @@ class PhotoDetailViewController: UIViewController, PHPhotoLibraryChangeObserver 
     var fetchResult: PHFetchResult<PHAsset>?          // カメラロールから取得したPHAssetのリスト
     var cameraViewController = CameraViewController() // ビューコントローラーのインスタンス
     var collectionView: UICollectionView!             // フィルターを表示するためのUICollectionView
-    var appliedFilters: [String] = []                 // 適用されたフィルターのリスト
 
     override func viewDidLoad() {
         super.viewDidLoad()

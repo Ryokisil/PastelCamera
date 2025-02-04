@@ -2,6 +2,11 @@
 import CoreImage
 
 class OriginalFilter: CIFilter, CustomFilterProtocol {
+    
+    var filterName: String {
+        return "Original"
+    }
+    
     @objc dynamic var inputImage: CIImage?
 
     override var attributes: [String : Any] {

@@ -1,11 +1,9 @@
 
-import Testing
+import XCTest
 @testable import PastelCamera
 
-struct PastelCameraTests {
-
-    @Test func example() async throws {
-        // Write your test here and use APIs like `#expect(...)` to check expected conditions.
-    }
-
+final class PastelCameraTests: XCTestCase {
+    var viewModel: CameraViewModel!
+    
+    
 }

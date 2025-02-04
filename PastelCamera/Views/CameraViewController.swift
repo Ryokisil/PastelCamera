@@ -28,16 +28,18 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
         capturedImage = photo
     }
     
-    private let thumbnailImageView = UIImageView()
-    private var frameCounter = 0
-    private var viewModel = CameraViewModel()                      // ViewModelのインスタンス。データ管理とUIロジックを担当
-    private let photoViewModel = PhotoViewModel()
+    private var initialZoomFactor: CGFloat = 1.0
+    private var currentDevice: AVCaptureDevice? {
+        return viewModel.currentDevice
+    }
+    private var viewModel = CameraViewModel()
     private var cancellables = Set<AnyCancellable>()
+    private let thumbnailViewModel = ThumbnailViewModel()
     var shutterSoundID: SystemSoundID = 0
-    var isFlashOn = false                                 // フラッシュのオン/オフ状態を保持するフラグ
+    var isFlashOn = false
     var latestFilteredImage: UIImage?
-    var capturedImage: UIImage?                           // サムネイルに表示する撮影済みの画像
-    var ciContext: CIContext!
+    var capturedImage: UIImage?
+    var ciContext = CIContext(options: nil)
     var filters: [CIFilter] = []
     var currentFilterIndex = 0
     var imageView: UIImageView = {
@@ -109,45 +111,58 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
         return button
     }()
     
+    // フィルター名表示用ラベル
+    private let filterNameLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = .white
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+        label.textAlignment = .center
+        label.font = UIFont.boldSystemFont(ofSize: 16)
+        label.layer.cornerRadius = 8
+        label.layer.masksToBounds = true
+        label.isHidden = true  // 初期表示は非表示
+        return label
+    }()
+    
     // アプリ起動時のみviewDidLoadで初期設定を行う
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        // ViewModelの初期化と設定
-        viewModel = CameraViewModel()
         updateButtonStates()
         
         viewModel.delegate = self
-        
-        // カメラの設定をViewModelに任せる
+
         viewModel.setupCamera()
         
-        // プレビューレイヤーのセットアップ
-        setupCameraPreview()
+        // ピンチジェスチャーの追加
+        let pinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        view.addGestureRecognizer(pinchGesture)
         
         // UIのセットアップ
         setupUI()
         self.view.bringSubviewToFront(wideAngleButton) //　UIを一番手前に設置
         self.view.bringSubviewToFront(ultraWideButton) // UIを一番手前に設置
+        self.view.bringSubviewToFront(filterNameLabel) // UIを一番手前に設置
         
         // MP3ファイルから SystemSoundID を作成
         if let soundURL = Bundle.main.url(forResource: "Camera-Phone01-1", withExtension: "mp3") {
             AudioServicesCreateSystemSoundID(soundURL as CFURL, &shutterSoundID)
         }
         
+        ciContext = CIContext()
+        
+        addSwipeGestures()
+        
+        setupBindings()
+        
         // photoViewModelから「サムネイル更新」の通知を受け取る
-        photoViewModel.onThumbnailUpdated = { [weak self] image in
+        thumbnailViewModel.onThumbnailUpdated = { [weak self] image in
             guard let self = self else { return }
             DispatchQueue.main.async {
                 self.thumbnailButton.setImage(image, for: .normal)
                 self.capturedImage = image
             }
         }
-        
-        ciContext = CIContext()
-        
-        addSwipeGestures()
-        
     } // viewDidLoad
     
     override func viewDidAppear(_ animated: Bool) {
@@ -170,14 +185,6 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
 //        super.viewDidDisappear(animated)
 //        
 //    }
-
-    // カメラプレビューのセットアップ
-    private func setupCameraPreview() {
-        guard let captureSession = viewModel.captureSession else {
-            print("captureSessionがまだ初期化されていません")
-            return
-        }
-    }
     
     func addSwipeGestures() {
         let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
@@ -195,6 +202,12 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
         } else if gesture.direction == .right {
             viewModel.switchToPreviousFilter()
         }
+        
+        let name = viewModel.currentFilter.filterName
+        filterNameLabel.text = name
+        filterNameLabel.isHidden = false
+        
+        print("★handleSwipe: labelに \(name) をセット")
 
         print("現在のフィルター: \(viewModel.currentFilter)")
     }
@@ -222,6 +235,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
         view.addSubview(wideAngleButton)  // 広角カメラ(1.0)のボタン
         view.addSubview(ultraWideButton)  // 超広角カメラ(0.5)のボタン
         view.addSubview(imageView)        // 各種フィルター
+        view.addSubview(filterNameLabel)  // フィルターの名前を表示するやつ
 
         shutterButton.translatesAutoresizingMaskIntoConstraints = false
         flashButton.translatesAutoresizingMaskIntoConstraints = false
@@ -229,6 +243,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
         wideAngleButton.translatesAutoresizingMaskIntoConstraints = false
         ultraWideButton.translatesAutoresizingMaskIntoConstraints = false
         imageView.translatesAutoresizingMaskIntoConstraints = false
+        filterNameLabel.translatesAutoresizingMaskIntoConstraints = false
         
         // シャッターボタンのレイアウト
         NSLayoutConstraint.activate([
@@ -286,6 +301,13 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
             imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor, multiplier: 3.0/4.0)
         ])
         
+        NSLayoutConstraint.activate([
+            filterNameLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            filterNameLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 80),
+            filterNameLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
+            filterNameLabel.heightAnchor.constraint(equalToConstant: 30)
+        ])
+        
         // シャッターボタンに撮影アクション
         shutterButton.addTarget(self, action: #selector(didTapShutterButton), for: .touchUpInside)
         // フラッシュボタンのアクション
@@ -298,6 +320,22 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
         wideAngleButton.addTarget(self, action: #selector(didTapWideAngleButton), for: .touchUpInside)
         // 超広角カメラ切り替えアクション
         ultraWideButton.addTarget(self, action: #selector(didTapUltraWideButton), for: .touchUpInside)
+    }
+    
+    private func setupBindings() {
+        // filterNameForDisplay の値を購読し、UIを更新
+        viewModel.$filterNameForDisplay
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] filterName in
+                guard let self = self else { return }
+                if let name = filterName {
+                    self.filterNameLabel.text = name
+                    self.filterNameLabel.isHidden = false
+                } else {
+                    self.filterNameLabel.isHidden = true
+                }
+            }
+            .store(in: &cancellables)
     }
     
     @objc private func didTapWideAngleButton() {
@@ -377,106 +415,73 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, Cam
             print("Done presenting detailVC")
         }
     }
+    
+    @objc private func handlePinch(_ pinch: UIPinchGestureRecognizer) {
+        guard let device = currentDevice else { return }
+        
+        switch pinch.state {
+        case .began:
+            // ピンチ開始時に初期ズームを記録
+            initialZoomFactor = device.videoZoomFactor
+            do {
+                // ピンチ中ロックを保持し続ける（短時間ならOK）
+                try device.lockForConfiguration()
+            } catch {
+                print("zoom lock error:", error)
+            }
+            
+        case .changed:
+            // ピンチ中は常にズームを更新
+            let maxZoomFactor = device.activeFormat.videoMaxZoomFactor
+            let minZoomFactor: CGFloat = 1.0
+            
+            // ピンチのscaleに初期ズーム値を掛け合わせる
+            var zoomFactor = initialZoomFactor * pinch.scale
+            zoomFactor = max(minZoomFactor, min(zoomFactor, maxZoomFactor))
+            
+            device.videoZoomFactor = zoomFactor
+            
+        case .ended, .cancelled, .failed:
+            // ピンチ終了時にアンロック
+            device.unlockForConfiguration()
+            
+        default:
+            break
+        }
+    }
 }
 
 extension CameraViewController: AVCaptureVideoDataOutputSampleBufferDelegate {
-    func captureOutput(_ output: AVCaptureOutput,didOutput sampleBuffer: CMSampleBuffer,from connection: AVCaptureConnection) {
-
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-
-
+        
+        // 重いフィルタ処理は非同期で実行
         DispatchQueue.global(qos: .userInitiated).async {
+            // 現在のフィルタを取得
             let currentFilter = self.viewModel.currentFilter as (CustomFilterProtocol & CIFilter)
-
+            
+            // フィルタに入力画像をセット
             currentFilter.inputImage = ciImage
-
-            // inputImage セット後の状態をログ出力
-            if (currentFilter.inputImage) != nil {
-                //print("inputImage セット後: \(currentFilter) inputImage=\(input)")
-            } else {
-                //print("inputImage セットに失敗しました")
-            }
-
-            guard let outputImage = currentFilter.outputImage,
-                  let cgImage = self.ciContext.createCGImage(outputImage, from: outputImage.extent) else {
-                //print("フィルター処理に失敗しました")
+            
+            // フィルタ出力 → CGImage を生成
+            guard
+                let outputImage = currentFilter.outputImage,
+                let cgImage = self.ciContext.createCGImage(outputImage,
+                                                                     from: outputImage.extent)
+            else {
+                // フィルタ適用失敗
                 return
             }
-            //print("Got outputImage")
             
+            // UI更新はメインスレッドで
             DispatchQueue.main.async {
                 let uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
                 self.imageView.image = uiImage
                 self.latestFilteredImage = uiImage
-            }
-        }
-    }
-}
-
-class ZoomSelectorView: UIView {
-    var onZoomSelected: ((CGFloat) -> Void)?
-
-    private let zoomOptions: [CGFloat] = [0.5, 1.0]
-    private var buttons: [UIButton] = []
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupView()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setupView()
-    }
-
-    private func setupView() {
-        self.backgroundColor = UIColor.black.withAlphaComponent(0.5)
-        self.layer.cornerRadius = 10
-        self.clipsToBounds = true
-
-        let stackView = UIStackView()
-        stackView.axis = .horizontal
-        stackView.distribution = .fillEqually
-        stackView.alignment = .center
-        stackView.spacing = 8
-
-        for zoom in zoomOptions {
-            let button = UIButton(type: .system)
-            button.setTitle(zoom == 1.0 ? "1x" : "\(zoom)x", for: .normal)
-            button.tag = Int(zoom * 10)
-            button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
-            button.setTitleColor(.white, for: .normal)
-            button.addTarget(self, action: #selector(zoomButtonTapped(_:)), for: .touchUpInside)
-
-            buttons.append(button) // ボタンを配列に追加
-            stackView.addArrangedSubview(button)
-        }
-
-        self.addSubview(stackView)
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            stackView.topAnchor.constraint(equalTo: self.topAnchor, constant: 8),
-            stackView.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: -8),
-            stackView.leadingAnchor.constraint(equalTo: self.leadingAnchor, constant: 8),
-            stackView.trailingAnchor.constraint(equalTo: self.trailingAnchor, constant: -8)
-        ])
-    }
-
-    @objc private func zoomButtonTapped(_ sender: UIButton) {
-        let selectedZoom = CGFloat(sender.tag) / 10.0
-        onZoomSelected?(selectedZoom)
-        updateSelection(for: selectedZoom)
-    }
-
-    func updateSelection(for selectedZoom: CGFloat) {
-        for button in buttons {
-            if CGFloat(button.tag) / 10.0 == selectedZoom {
-                button.layer.borderColor = UIColor.yellow.cgColor
-                button.layer.borderWidth = 2
-                button.layer.cornerRadius = 5
-            } else {
-                button.layer.borderWidth = 0
             }
         }
     }

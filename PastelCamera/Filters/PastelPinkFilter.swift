@@ -2,6 +2,11 @@
 import CoreImage
 
 class PastelPinkFilter: CIFilter, CustomFilterProtocol {
+    
+    var filterName: String {
+        return "PastelPinkFilter"
+    }
+    
     @objc dynamic var inputImage: CIImage?
 
     override var attributes: [String : Any] {
@@ -32,5 +37,9 @@ class PastelPinkFilter: CIFilter, CustomFilterProtocol {
             kCIInputBackgroundImageKey: inputImage
         ])
         return blendFilter?.outputImage
+    }
+    
+    deinit {
+        //print("\(filterName) が解放されました")
     }
 }

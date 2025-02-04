@@ -15,27 +15,34 @@ class CameraViewModel: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     
     weak var delegate: CameraViewModelDelegate?
     
-    @Published var isTorchOn = false
+    @Published var filterNameForDisplay: String? = nil // フィルター名を一時的に表示させるプロパテjィ
+    @Published var isTorchOn = false                   //トーチの追跡
+    private var initialZoomFactor: CGFloat = 1.0
     private var photoOutput: AVCapturePhotoOutput!     // 写真のキャプチャを管理する出力オブジェクト
+    private var hideLabelTask: DispatchWorkItem?       // 切り替え時の消去用タスク（前回のタイマーをキャンセルするために保持しておく）
     private(set) var currentDevice: AVCaptureDevice?   // 現在使用中のカメラデバイス（広角や超広角カメラなど）を保持する
     private(set) var isWideAngle: Bool = true          // 現在のカメラ状態(広角か超広角か)を追跡
     private(set) var isFrontCameraActive: Bool = false // インカメの追跡
     var captureSession: AVCaptureSession!              // カメラの入力（デバイス）と出力（写真、ビデオなど）のデータフローを管理する
     var videoOutput: AVCaptureVideoDataOutput!
+    var originalInputImage: CIImage?
     var currentFilterIndex = 0
-    // 現在のフィルターを取得
+    // 現在のフィルターインスタンスを取得
     var currentFilter: (CIFilter & CustomFilterProtocol) {
-        return filters[currentFilterIndex]
+        return filters[currentFilterIndex]()
     }
-    // フィルタ配列をCustomFilterProtocol & CIFilterで型指定
-    var filters: [CIFilter & CustomFilterProtocol] = [
-        OriginalFilter(),
-        PastelLavenderFilter(),
-        PastelLightBlueFilter(),
-        PastelPinkFilter(),
-        PastelRoseFilter(),
-        PastelVioletFilter(),
-        PastelYellowFilter()
+    // フィルタインスタンスを都度生成して不要なリソースを抱えないようにしたい
+    lazy var filters: [() -> (CIFilter & CustomFilterProtocol)] = [
+        { OriginalFilter() },
+        { PastelLavenderFilter() },
+        { PastelLightBlueFilter() },
+        { PastelMintFilter() },
+        { PastelPinkFilter() },
+        { PastelRoseFilter() },
+        { PastelVioletFilter() },
+        { PastelYellowFilter() },
+        { PastelLilacFilter() },
+        { PastelAquaFilter() }
     ]
     
     var canUseTorch: Bool {
@@ -53,16 +60,59 @@ class CameraViewModel: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     
     // 次のフィルターに切り替え
     func switchToNextFilter() {
-        currentFilterIndex = (currentFilterIndex + 1) % filters.count
-        print("Switched to next filter. currentFilterIndex:", currentFilterIndex)
-        print("Current filter:", currentFilter)
+        switchFilter(isNext: true)
+        // フィルターをキャッシュから取得
+        _ = currentFilter
     }
     
     // 前のフィルターに切り替え
     func switchToPreviousFilter() {
-        currentFilterIndex = (currentFilterIndex - 1 + filters.count) % filters.count
-        print("Switched to previous filter. currentFilterIndex:", currentFilterIndex)
-        print("Current filter:", currentFilter)
+        switchFilter(isNext: false)
+        // フィルターをキャッシュから取得
+        _ = currentFilter
+    }
+    
+    // フィルターの切り替え
+    func switchFilter(isNext: Bool) {
+        // インデックス更新前のチェック
+        guard !filters.isEmpty else {
+            print("エラー: フィルター配列が空です")
+            return
+        }
+        
+        // 現在のフィルターインスタンスを解放
+        let currentFilterName = currentFilter.filterName
+        
+        // インデックスを更新
+        let previousIndex = currentFilterIndex
+        currentFilterIndex = isNext
+        ? (currentFilterIndex + 1) % filters.count // 次のフィルター
+        : (currentFilterIndex - 1 + filters.count) % filters.count // 前のフィルター
+        
+        // 新しいフィルターの取得
+        let newFilter = currentFilter
+        
+        // フィルターの入力画像をリセット
+        if let originalImage = originalInputImage { // originalInputImage は元の画像
+            newFilter.inputImage = originalImage
+        }
+        
+        // フィルター名を表示
+        filterNameForDisplay = newFilter.filterName
+        
+        // 前のタスクをキャンセル
+        hideLabelTask?.cancel()
+        
+        // 新しいタスクをスケジュール
+        let task = DispatchWorkItem { [weak self] in
+            self?.filterNameForDisplay = nil
+        }
+        hideLabelTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: task)
+        
+        // デバッグ情報
+        print("Switched filter. Previous index: \(previousIndex), Current index: \(currentFilterIndex)")
+        print("Current filter:", newFilter)
     }
     
     // カメラの初期設定を行う
@@ -78,6 +128,8 @@ class CameraViewModel: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         }
 
         captureSession.addInput(input)
+        
+        self.currentDevice = backCamera
 
         // PhotoOutput 設定
         photoOutput = AVCapturePhotoOutput()
@@ -100,6 +152,17 @@ class CameraViewModel: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         DispatchQueue.global(qos: .background).async {
             self.captureSession.startRunning()
             print("Capture session started in background thread")
+            
+            do {
+                try backCamera.lockForConfiguration()
+                let minZoom = backCamera.minAvailableVideoZoomFactor
+                let maxZoom = backCamera.maxAvailableVideoZoomFactor
+                print("★起動直後 backCamera minZoom=\(minZoom), maxZoom=\(maxZoom)")
+                backCamera.unlockForConfiguration()
+                
+            } catch {
+                print("Lock error for zoom debug: \(error)")
+            }
         }
     }
 
@@ -212,9 +275,36 @@ class CameraViewModel: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             // 設定変更を確定
             captureSession.commitConfiguration()
             updatePreviewMirroring(isFrontCamera: isFrontCameraActive)
+            
+            // フロントカメラがアクティブなら解像度とフレームレートを確認
+            if isFrontCameraActive {
+                configureSessionForFrontCamera()
+                logCurrentCameraSpecifications(for: newDevice)
+            }
         } catch {
             print("Error: \(error)")
         }
+    }
+    
+    /// 新しいデバイスの解像度とフレームレートをログに出力するヘルパー関数
+    private func logCurrentCameraSpecifications(for device: AVCaptureDevice) {
+        // 解像度の取得
+        let activeFormat = device.activeFormat
+        let description = activeFormat.formatDescription
+        let dimensions = CMVideoFormatDescriptionGetDimensions(description)
+        print("現在の解像度: \(dimensions.width) x \(dimensions.height)")
+        
+        // フレームレートの取得
+        for range in activeFormat.videoSupportedFrameRateRanges {
+            print("サポートされているフレームレート範囲: \(range.minFrameRate) - \(range.maxFrameRate) fps")
+        }
+        
+        let minFrameDuration = device.activeVideoMinFrameDuration
+        let maxFrameDuration = device.activeVideoMaxFrameDuration
+        
+        let currentMinFPS = Double(minFrameDuration.timescale) / Double(minFrameDuration.value)
+        let currentMaxFPS = Double(maxFrameDuration.timescale) / Double(maxFrameDuration.value)
+        print("現在のフレームレート範囲: \(currentMinFPS) - \(currentMaxFPS) fps")
     }
     
     // インカメの時のプレビュー向きを調整
@@ -232,10 +322,25 @@ class CameraViewModel: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             connection.videoOrientation = .landscapeRight
         }
     }
+    
+    func configureSessionForFrontCamera() {
+        captureSession.beginConfiguration()
+        
+        // フロントカメラ使用時に解像度をVGA(640x480)に下げる（4:3のアスペクト比）
+        if isFrontCameraActive {
+            if captureSession.canSetSessionPreset(.vga640x480) {
+                captureSession.sessionPreset = .vga640x480
+            } else {
+                print("エラー: VGA640x480 プリセットに設定できません")
+            }
+        }
+        
+        captureSession.commitConfiguration()
+    }
 }
 
 // 最新の写真サムネイルを扱うViewModel
-final class PhotoViewModel: NSObject, PHPhotoLibraryChangeObserver {
+final class ThumbnailViewModel: NSObject, PHPhotoLibraryChangeObserver {
     
     private(set) var latestThumbnail: UIImage?    // サムネイルの最新の写真
     var onThumbnailUpdated: ((UIImage?) -> Void)? // 新しい写真を取得したら呼ばれる通知クロージャ
@@ -320,67 +425,5 @@ final class PhotoViewModel: NSObject, PHPhotoLibraryChangeObserver {
     deinit {
         // ViewModel破棄時にリスナー解除
         PHPhotoLibrary.shared().unregisterChangeObserver(self)
-    }
-}
-
-// 撮影した写真を処理するクラス
-class PhotoProcessor {
-
-    // 画像の向きを修正
-    private static func fixImageOrientation(_ image: UIImage) -> UIImage? {
-        // すでに正しい向きならそのまま返す
-        if image.imageOrientation == .up {
-            return image
-        }
-
-        // 画像のコンテキストを作成
-        guard let cgImage = image.cgImage else { return nil }
-        let width = image.size.width
-        let height = image.size.height
-        var transform = CGAffineTransform.identity
-
-        // 向きに応じてアフィン変換を設定
-        switch image.imageOrientation {
-        case .down, .downMirrored:
-            transform = transform.translatedBy(x: width, y: height).rotated(by: .pi)
-        case .left, .leftMirrored:
-            transform = transform.translatedBy(x: width, y: 0).rotated(by: .pi / 2)
-        case .right, .rightMirrored:
-            transform = transform.translatedBy(x: 0, y: height).rotated(by: -.pi / 2)
-        case .up, .upMirrored:
-            break
-        @unknown default:
-            return image
-        }
-
-        // ミラー処理（反転）
-        switch image.imageOrientation {
-        case .upMirrored, .downMirrored:
-            transform = transform.translatedBy(x: width, y: 0).scaledBy(x: -1, y: 1)
-        case .leftMirrored, .rightMirrored:
-            transform = transform.translatedBy(x: height, y: 0).scaledBy(x: -1, y: 1)
-        default:
-            break
-        }
-
-        // コンテキストの作成
-        guard let colorSpace = cgImage.colorSpace else { return nil }
-        guard let context = CGContext(data: nil, width: Int(width), height: Int(height), bitsPerComponent: cgImage.bitsPerComponent, bytesPerRow: 0, space: colorSpace, bitmapInfo: cgImage.bitmapInfo.rawValue) else {
-            return nil
-        }
-
-        context.concatenate(transform)
-
-        // 描画範囲を設定し、画像を描画
-        switch image.imageOrientation {
-        case .left, .leftMirrored, .right, .rightMirrored:
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: height, height: width))
-        default:
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        }
-
-        // 新しいCGImageを作成し、UIImageに変換
-        guard let newCGImage = context.makeImage() else { return nil }
-        return UIImage(cgImage: newCGImage)
     }
 }

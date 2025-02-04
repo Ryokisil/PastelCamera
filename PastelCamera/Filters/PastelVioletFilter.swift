@@ -2,6 +2,11 @@
 import CoreImage
 
 class PastelVioletFilter: CIFilter, CustomFilterProtocol {
+    
+    var filterName: String {
+        return "PastelVioletFilter"
+    }
+    
     @objc dynamic var inputImage: CIImage?
 
     override var attributes: [String : Any] {
@@ -21,6 +26,7 @@ class PastelVioletFilter: CIFilter, CustomFilterProtocol {
         // パステルバイオレットカラー (#D6ADFF)
         let filterColor = CIColor(red: 0.84, green: 0.68, blue: 1.0, alpha: 0.1)
         let colorFilter = CIFilter(name: "CIConstantColorGenerator", parameters: [kCIInputColorKey: filterColor])
+        
         guard let overlay = colorFilter?.outputImage?.cropped(to: inputImage.extent) else {
             return inputImage
         }
@@ -30,5 +36,9 @@ class PastelVioletFilter: CIFilter, CustomFilterProtocol {
             kCIInputBackgroundImageKey: inputImage
         ])
         return blendFilter?.outputImage
+    }
+    
+    deinit {
+        //print("\(filterName) が解放されました")
     }
 }

@@ -1,17 +1,17 @@
 
 import CoreImage
 
-class PastelLightBlueFilter: CIFilter, CustomFilterProtocol {
+class PastelLilacFilter: CIFilter, CustomFilterProtocol {
     
     var filterName: String {
-        return "PastelLightBlueFilter"
+        return "PastelLilacFilter"
     }
     
     @objc dynamic var inputImage: CIImage?
-
+    
     override var attributes: [String : Any] {
         return [
-            kCIAttributeFilterDisplayName: "Pastel Light Blue Filter",
+            kCIAttributeFilterDisplayName: "Pastel Lilac Filter",
             kCIInputImageKey: [
                 kCIAttributeClass: "CIImage",
                 kCIAttributeDisplayName: "Input Image",
@@ -19,24 +19,23 @@ class PastelLightBlueFilter: CIFilter, CustomFilterProtocol {
             ]
         ]
     }
-
+    
     override var outputImage: CIImage? {
         guard let inputImage = inputImage else { return nil }
-
-        // パステルライトブルーのオーバーレイ作成 (#B2B2FF)
-        let filterColor = CIColor(red: 0.7, green: 0.7, blue: 1.0, alpha: 0.1)
+        
+        // ライラックのオーバーレイを作成
+        let filterColor = CIColor(red: 0.9, green: 0.7, blue: 1.0, alpha: 0.2)
         let colorFilter = CIFilter(name: "CIConstantColorGenerator", parameters: [kCIInputColorKey: filterColor])
-
-        // オーバーレイ画像を元画像に合成
+        
         guard let overlay = colorFilter?.outputImage?.cropped(to: inputImage.extent) else {
             return inputImage
         }
-
+        
+        // オーバーレイと元の画像をブレンド
         let blendFilter = CIFilter(name: "CISourceOverCompositing", parameters: [
             kCIInputImageKey: overlay,
             kCIInputBackgroundImageKey: inputImage
         ])
-
         return blendFilter?.outputImage
     }
     
